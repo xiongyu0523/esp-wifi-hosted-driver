@@ -364,10 +364,19 @@
                     <state>$PROJ_DIR$\..\stm32l4xx_lib\</state>
                     <state>$PROJ_DIR$\..\stm32l4xx_lib\CMSIS\Include</state>
                     <state>$PROJ_DIR$\..\stm32l4xx_lib\CMSIS\Device\ST\STM32L4xx\Include</state>
+                    <state>$PROJ_DIR$\..\sample_azure_iot_embedded_sdk</state>
                     <state>$PROJ_DIR$\..\common_hardware_code</state>
                     <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\common\include</state>
                     <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\common\protobuf-c</state>
                     <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\host_common\include</state>
+                    <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\common</state>
+                    <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\app</state>
+                    <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\app\control</state>
+                    <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\app\data</state>
+                    <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\driver\netif</state>
+                    <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\driver\network</state>
+                    <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\driver\serial</state>
+                    <state>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\driver\spi</state>
                     <state>$PROJ_DIR$\..\netxduo\addons\azure_iot\azure-sdk-for-c\sdk\inc</state>
                     <state>$PROJ_DIR$\..\netxduo\addons\azure_iot\</state>
                 </option>
@@ -2372,7 +2381,7 @@
             <name>$PROJ_DIR$\nx_azure_iot_ciphersuites.c</name>
         </file>
         <file>
-            <name>$PROJ_DIR$\nx_driver_esp_offload.c</name>
+            <name>$PROJ_DIR$\nx_driver_esp_hosted.c</name>
         </file>
         <file>
             <name>$PROJ_DIR$\sample_azure_iot_embedded_sdk.c</name>

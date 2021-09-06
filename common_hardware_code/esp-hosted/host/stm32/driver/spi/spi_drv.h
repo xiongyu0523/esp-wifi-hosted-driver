@@ -31,12 +31,16 @@ extern "C" {
 /* NSS or CS0 configuration (Pin 11) */
 /* In case of different board than STM32F469I,
  * User need to update SPI NSS pin as per hardware*/
-#ifndef USR_SPI_CS_GPIO_Port
-#define USR_SPI_CS_GPIO_Port    GPIOA
-#endif
-#ifndef USR_SPI_CS_Pin
-#define USR_SPI_CS_Pin          GPIO_PIN_15
-#endif
+#define USR_SPI_CS_Pin 				GPIO_PIN_15
+#define USR_SPI_CS_GPIO_Port 		GPIOA
+#define GPIO_DATA_READY_Pin 		GPIO_PIN_7
+#define GPIO_DATA_READY_GPIO_Port 	GPIOC
+#define GPIO_DATA_READY_EXTI_IRQn 	EXTI9_5_IRQn
+#define GPIO_HANDSHAKE_Pin 			GPIO_PIN_6
+#define GPIO_HANDSHAKE_GPIO_Port 	GPIOC
+#define GPIO_HANDSHAKE_EXTI_IRQn 	EXTI9_5_IRQn
+#define GPIO_RESET_Pin 				GPIO_PIN_13
+#define GPIO_RESET_GPIO_Port 		GPIOB
 
 typedef enum spi_drv_events_s {
 	SPI_DRIVER_ACTIVE

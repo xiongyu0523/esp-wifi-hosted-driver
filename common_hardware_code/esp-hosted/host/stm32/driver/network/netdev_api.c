@@ -75,7 +75,7 @@ struct network_handle * network_open(char *if_name, void (* net_rx_callback)(str
   *         xTicksToWait - wait for ticks
   * @retval buffer read
   */
-struct pbuf * network_read(struct network_handle *handle, TickType_t xTicksToWait)
+struct pbuf * network_read(struct network_handle *handle, uint32_t xTicksToWait)
 {
 	struct pbuf *buffer = NULL;
 
@@ -87,7 +87,7 @@ struct pbuf * network_read(struct network_handle *handle, TickType_t xTicksToWai
 	if (!buffer)
 		return NULL;
 
-	xQueueReceive(handle->ndev->rx_q, buffer, xTicksToWait);
+	tx_queue_receive(&(handle->ndev->rx_q), buffer, xTicksToWait);
 
 	return buffer;
 }

@@ -14,25 +14,18 @@
 //
 
 /** Includes **/
-#include "usart.h"
-#include "cmsis_os.h"
+#include "tx_api.h"
 #include "spi_drv.h"
 #include "control.h"
 #include "trace.h"
 #include "app_main.h"
 #include "netdev_api.h"
 #include "arp_server_stub.h"
+#include "stm32l4xx_hal.h"
 
 /** Constants/Macros **/
 #define ARPING_PATH_TASK_STACK_SIZE     4096
-
-#ifdef __GNUC__
-/* With GCC, small printf (option LD Linker->Libraries->Small printf
- set to 'Yes') calls __io_putchar() */
-#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
-#else
-#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
-#endif /* __GNUC__ */
+#define ARPING_TASK_PRIO				0
 
 /** Exported variables **/
 
@@ -40,15 +33,12 @@
 static void init_sta(void);
 static void init_ap(void);
 static void reset_slave(void);
-static void arping_task(void const *arg);
+static void arping_task(ULONG arg);
 
-/* GetIdleTaskMemory prototype (linked to static allocation support) */
-void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer,
-	StackType_t **ppxIdleTaskStackBuffer, uint32_t *pulIdleTaskStackSize );
-
+static CHAR arping_task_stack[ARPING_PATH_TASK_STACK_SIZE];
 
 struct network_handle *sta_handle, *ap_handle;
-static osThreadId arping_task_id = 0;
+static TX_THREAD arping_task_id;
 
 /** function definition **/
 
@@ -66,17 +56,17 @@ static void reset_slave(void)
 	__HAL_RCC_GPIOB_CLK_ENABLE();
 
 	/* TODO: make this pin configurable from project config */
-	GPIO_InitStruct.Pin = GPIO_RESET_Pin;
+	GPIO_InitStruct.Pin = GPIO_PIN_13;
 	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
 	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-	HAL_GPIO_Init(GPIO_RESET_GPIO_Port, &GPIO_InitStruct);
+	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-	HAL_GPIO_WritePin(GPIO_RESET_GPIO_Port, GPIO_RESET_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
 	hard_delay(50);
 
 	/* revert to initial state */
 	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-	HAL_GPIO_Init(GPIO_RESET_GPIO_Port, &GPIO_InitStruct);
+	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 	/* stop spi transactions short time to avoid slave sync issues */
 	hard_delay(50000);
@@ -145,8 +135,10 @@ static void spi_driver_event_handler(uint8_t event)
   * @param  None
   * @retval None
   */
-void MX_FREERTOS_Init(void)
+void Arping_test(void)
 {
+	UINT status;
+
 	reset_slave();
 
 	/* Init network interface */
@@ -156,56 +148,10 @@ void MX_FREERTOS_Init(void)
 	stm_spi_init(spi_driver_event_handler);
 
 	/* This thread's priority shouls be >= spi driver's transaction task priority */
-	osThreadDef(Arping_Thread, arping_task, osPriorityAboveNormal, 0,
-			ARPING_PATH_TASK_STACK_SIZE);
-	arping_task_id = osThreadCreate(osThread(Arping_Thread), NULL);
-	assert(arping_task_id);
-}
-
-/**
-  * @brief  Retargets the C library printf function to the USART.
-  * @param  None
-  * @retval None
-  */
-PUTCHAR_PROTOTYPE
-{
-	/* Place your implementation of fputc here */
-	/* e.g. write a character to the USART6 and
-	 * Loop until the end of transmission */
-	HAL_UART_Transmit(&huart3, (uint8_t *)&ch, 1, 0xFFFF);
-
-	return ch;
-}
-
-
-/**
-  * @brief FreeRTOS hook function for idle task stack
-  * @param  None
-  * @retval None
-  */
-void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer,
-	StackType_t **ppxIdleTaskStackBuffer,
-	uint32_t *pulIdleTaskStackSize)
-{
-	/* If the buffers to be provided to the Idle task are declared
-	 * inside this function then they must be declared static –
-	 * otherwise they will be allocated on the stack and so not exists
-	 * after this function exits.
-	 * */
-	static StaticTask_t xIdleTaskTCB;
-	static StackType_t uxIdleTaskStack[ configMINIMAL_STACK_SIZE ];
-
-	/* Pass out a pointer to the StaticTask_t structure in which the
-	 * Idle task’s state will be stored. */
-	*ppxIdleTaskTCBBuffer = &xIdleTaskTCB;
-
-	/* Pass out the array that will be used as the Idle task’s stack. */
-	*ppxIdleTaskStackBuffer = uxIdleTaskStack;
-
-	/* Pass out the size of the array pointed to by *ppxIdleTaskStackBuffer.
-	Note that, as the array is necessarily of type StackType_t,
-	configMINIMAL_STACK_SIZE is specified in words, not bytes. */
-	*pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+	status = tx_thread_create(&arping_task_id, "Arping Thread", 
+							  arping_task, 0, arping_task_stack, ARPING_PATH_TASK_STACK_SIZE,
+							  ARPING_TASK_PRIO, ARPING_TASK_PRIO, TX_NO_TIME_SLICE, TX_AUTO_START);
+	assert(status == TX_SUCCESS);
 }
 
 /**
@@ -338,7 +284,7 @@ static void init_ap(void)
   * @param Not used
   * @retval None
   */
-static void arping_task(void const *arg)
+static void arping_task(ULONG arg)
 {
 	uint32_t sta_ip, softap_ip;
 	uint32_t sta_dest_ip, softap_dest_ip;
@@ -358,6 +304,6 @@ static void arping_task(void const *arg)
 		if(ap_handle)
 			send_arp_req(ap_handle, get_self_mac_softap(), &softap_ip, dst_mac_bytes, &softap_dest_ip);
 
-		osDelay(1000);
+		tx_thread_sleep(MS_TO_TICKS(1000));
 	}
 }

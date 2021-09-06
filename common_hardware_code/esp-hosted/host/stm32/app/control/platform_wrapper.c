@@ -13,16 +13,23 @@
 // limitations under the License.
 
 //#include "unistd.h"
+
+#include "tx_api.h"
+
 #include "string.h"
-#include "cmsis_os.h"
+
 #include "trace.h"
 #include "serial_if.h"
 #include "transport_pserial.h"
 #include "platform_wrapper.h"
 
-#define MILLISEC_TO_SEC			1000
-static osSemaphoreId readSemaphore;
+#define BYTE_POOL_SIZE			(64 * 1024)
+
+static TX_SEMAPHORE readSemaphore;
 static serial_handle_t * serial_if_g;
+
+static UCHAR        byte_pool_mem[BYTE_POOL_SIZE];
+static TX_BYTE_POOL byte_tool;
 
 static void control_path_rx_indication(void);
 
@@ -32,14 +39,14 @@ struct esp_hosted_driver_handle_t {
 
 int control_path_platform_init(void)
 {
-	osSemaphoreDef(READSEM);
+	UINT status;
 
 	/* control path semaphore */
-	readSemaphore = osSemaphoreCreate(osSemaphore(READSEM) , 1);
-	assert(readSemaphore);
+	status = tx_semaphore_create(&readSemaphore, "Read Semaphore", 1);
+	assert(status == TX_SUCCESS);
 
 	/* grab the semaphore, so that task will be mandated to wait on semaphore */
-	if (osSemaphoreWait(readSemaphore , portMAX_DELAY) != osOK) {
+	if (tx_semaphore_get(&readSemaphore, TX_WAIT_FOREVER) != TX_SUCCESS) {
 	    printf("could not obtain readSemaphore\n\r");
 	    return STM_FAIL;
 	}
@@ -68,34 +75,31 @@ int control_path_platform_deinit(void)
 
 static void control_path_rx_indication(void)
 {
-	/* heads up to control path for read */
-	if(readSemaphore) {
-		osSemaphoreRelease(readSemaphore);
-	}
+	(VOID)tx_semaphore_put(&readSemaphore);
+}
+
+void esp_hosted_heap_init(void)
+{
+    (VOID)tx_byte_pool_create(&byte_tool, "ESP Hosted Byte Pool", byte_pool_mem, BYTE_POOL_SIZE);
 }
 
 void* esp_hosted_malloc(size_t size)
 {
-	return malloc(size);
+    void *pointer;
+    return tx_byte_allocate(&byte_tool, &pointer, size, TX_NO_WAIT) == TX_SUCCESS ? pointer : NULL;
 }
 
 void* esp_hosted_calloc(size_t blk_no, size_t size)
 {
-	void* ptr = malloc(blk_no*size);
-	if (!ptr) {
-		return NULL;
-	}
-
-	memset(ptr, 0, blk_no*size);
-	return ptr;
+    size_t total = blk_no * size;
+    void *pointer = esp_hosted_malloc(total);
+    TX_MEMSET(pointer, 0, total);
+    return pointer;
 }
 
 void esp_hosted_free(void* ptr)
 {
-	if(ptr) {
-		free(ptr);
-		ptr=NULL;
-	}
+    (VOID)tx_byte_release(ptr);
 }
 
 struct esp_hosted_driver_handle_t* esp_hosted_driver_open(const char* transport)
@@ -153,11 +157,11 @@ uint8_t* esp_hosted_driver_read (struct esp_hosted_driver_handle_t* esp_hosted_d
 		printf("Invalid parameters in read\n\r");
 		return NULL;
 	}
-	if(! readSemaphore) {
+	if(readSemaphore.tx_semaphore_id == TX_CLEAR_ID) {
 		printf("Semaphore not initialized\n\r");
 		return NULL;
 	}
-	if (osSemaphoreWait(readSemaphore , wait * MILLISEC_TO_SEC ) != osOK) {
+	if (tx_semaphore_get(&readSemaphore , MS_TO_TICKS(wait * 1000)) != TX_SUCCESS) {
 		printf("Failed to read data \n\r");
 		return NULL;
 	}

@@ -21,6 +21,10 @@
 
 /** Constants/Macros **/
 
+#ifdef __ICCARM__
+#define isascii(c)   ((unsigned)(c) < 0x80)
+#endif
+
 /** Exported variables **/
 
 /** Function declaration **/

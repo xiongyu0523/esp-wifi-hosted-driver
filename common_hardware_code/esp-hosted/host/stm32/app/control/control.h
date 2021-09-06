@@ -21,7 +21,6 @@ extern "C" {
 #endif
 
 /** Includes **/
-#include "cmsis_os.h"
 #include "common.h"
 
 /** constants/macros **/

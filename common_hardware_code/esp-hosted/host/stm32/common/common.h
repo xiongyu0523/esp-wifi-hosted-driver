@@ -23,12 +23,14 @@ extern "C" {
 /** Includes **/
 #include "stdint.h"
 #include "stddef.h"
+#include "tx_api.h"
+#include "platform_wrapper.h"
 
 /** Constants/Macros **/
 #define UNUSED_VAR(x)                     (void)(x);
 #define MAX_SPI_BUFFER_SIZE               1600
-#define malloc                            pvPortMalloc
-#define free                              vPortFree
+#define malloc                            esp_hosted_malloc
+#define free                              esp_hosted_free
 
 #define htole16(x)                        ((uint16_t)(x))
 #define le16toh(x)                        ((uint16_t)(x))
@@ -37,6 +39,7 @@ extern "C" {
 #define MAC_LEN                           6
 #define MIN_MAC_STRING_LEN                17
 
+#define MS_TO_TICKS(ms)             	  ((ms) * TX_TIMER_TICKS_PER_SECOND / 1000)
 
 
 typedef enum stm_ret_s {

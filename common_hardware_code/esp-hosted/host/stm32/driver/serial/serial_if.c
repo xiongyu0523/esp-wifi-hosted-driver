@@ -32,7 +32,8 @@ typedef enum {
 } serial_state_e;
 
 /* data structures needed for serial driver */
-static QueueHandle_t to_serial_intf_queue[MAX_SERIAL_INTF];
+static TX_QUEUE to_serial_intf_queue[MAX_SERIAL_INTF];
+static interface_buffer_handle_t to_serial_intf_queue_buffer[MAX_SERIAL_INTF][TO_SERIAL_INFT_QUEUE_SIZE];
 static serial_handle_t * interface_handle_g[MAX_SERIAL_INTF] = {NULL};
 static uint8_t conn_num = 0;
 
@@ -70,16 +71,13 @@ static int serial_open(serial_handle_t *serial_hdl)
 		return STM_FAIL;
 	}
 
-	if (serial_hdl->queue) {
+	if (serial_hdl->queue.tx_queue_id != TX_CLEAR_ID) {
 		/* clean up earlier queue */
-		vQueueDelete(serial_hdl->queue);
+		(VOID)tx_queue_delete(&(serial_hdl->queue));
 	}
 
 	/* Queue - serial rx */
-	serial_hdl->queue = xQueueCreate(TO_SERIAL_INFT_QUEUE_SIZE,
-		sizeof(interface_buffer_handle_t));
-
-	if (! serial_hdl->queue) {
+	if (tx_queue_create(&(serial_hdl->queue), "Serial Rx Queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), &to_serial_intf_queue_buffer[conn_num], sizeof(to_serial_intf_queue_buffer[0])) != TX_SUCCESS) {
 		serial_cleanup(serial_hdl);
 		return STM_FAIL;
 	}
@@ -111,9 +109,8 @@ static serial_handle_t * get_serial_handle(const uint8_t iface_num)
   */
 static int serial_close(serial_handle_t * serial_hdl)
 {
-	if (serial_hdl->queue) {
-		vQueueDelete(serial_hdl->queue);
-		serial_hdl->queue = NULL;
+	if (serial_hdl->queue.tx_queue_id != TX_CLEAR_ID) {
+		(VOID)tx_queue_delete(&(serial_hdl->queue));
 	}
 
 	/* reset connection */
@@ -167,7 +164,7 @@ static uint8_t * serial_read(const serial_handle_t * serial_hdl,
 	 *
 	 * In our example, first approach of blocking read is used.
 	 */
-	if (pdTRUE != xQueueReceive(serial_hdl->queue, &buf_handle, 0)) {
+	if (TX_SUCCESS != tx_queue_receive((TX_QUEUE *)&(serial_hdl->queue), &buf_handle, TX_NO_WAIT)) {
 		printf("serial queue recv failed \n\r");
 		return NULL;
 	}
@@ -230,8 +227,8 @@ stm_ret_t serial_rx_handler(uint8_t if_num, uint8_t *rxbuff, uint16_t rx_len)
 	buf_handle.free_buf_handle = free;
 
 	/* send to serial queue */
-	if (pdTRUE != xQueueSend(serial_hdl->queue,
-		    &buf_handle, portMAX_DELAY)) {
+	if (TX_SUCCESS != tx_queue_send(&(serial_hdl->queue),
+		    &buf_handle, TX_WAIT_FOREVER)) {
 		printf("Failed send serialif queue[%u]\n\r", if_num);
 		return STM_FAIL;
 	}

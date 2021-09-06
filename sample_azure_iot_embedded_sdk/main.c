@@ -171,6 +171,8 @@ void SAMPLE_BOARD_SETUP();
 void SAMPLE_NETWORK_CONFIGURE(const CHAR *ssid_ptr, const CHAR *pwd_ptr, NX_IP *ip_ptr, ULONG *dns_address);
 #endif
 
+extern void Arping_test(void);
+
 /* Define main entry point.  */
 int main(void)
 {
@@ -294,6 +296,12 @@ UINT    dns_server_address_size = sizeof(dns_server_address);
 #endif
 
     NX_PARAMETER_NOT_USED(parameter);
+    
+    Arping_test();
+    
+    while(1) {
+        tx_thread_sleep(100);
+    }
 
 #ifndef SAMPLE_DHCP_DISABLE
     dhcp_wait();

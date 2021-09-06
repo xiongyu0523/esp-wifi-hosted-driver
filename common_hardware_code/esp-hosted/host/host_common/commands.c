@@ -8,7 +8,7 @@
 #include "platform_wrapper.h"
 #include "esp_hosted_config.pb-c.h"
 
-#ifdef STM32F469xx
+#ifdef STM32L4S5xx
 #include "common.h"
 #define command_log(...) printf(__VA_ARGS__); printf("\r");
 #else
@@ -512,8 +512,8 @@ int wifi_get_ap_config (esp_hosted_control_config_t *ap_config)
         }
         if (resp->resp_get_ap_config->bssid.data) {
             strncpy((char *)ap_config->station.bssid,
-                    (char *)resp->resp_get_ap_config->bssid.data, MAC_LENGTH);
-            ap_config->station.bssid[MAC_LENGTH-1] = '\0';
+                    (char *)resp->resp_get_ap_config->bssid.data, BSSID_LENGTH);
+            ap_config->station.bssid[BSSID_LENGTH-1] = '\0';
         }
 
         ap_config->station.channel = resp->resp_get_ap_config->chnl;

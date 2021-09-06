@@ -21,6 +21,7 @@ extern "C" {
 #endif
 
 /** Includes **/
+#include <stdint.h>
 #include "stdio.h"
 
 /** constants/macros **/

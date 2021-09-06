@@ -5,39 +5,17 @@
 #include "stm32l4xx_hal.h"  
 #include "stm32l4s5i_iot01.h"
 #include "wifi.h"
-
-/* WIFI Security type, the security types are defined in wifi.h.
-  WIFI_ECN_OPEN = 0x00,         
-  WIFI_ECN_WEP = 0x01,          
-  WIFI_ECN_WPA_PSK = 0x02,      
-  WIFI_ECN_WPA2_PSK = 0x03,     
-  WIFI_ECN_WPA_WPA2_PSK = 0x04, 
-*/
-#ifndef WIFI_SECURITY_TYPE
-#error "Symbol WIFI_SECURITY_TYPE must be defined."
-#endif /* WIFI_SECURITY_TYPE  */
-
-#define TERMINAL_USE
-
-#ifndef RETRY_TIMES
-#define RETRY_TIMES 3
-#endif
-
-#ifdef TERMINAL_USE
-extern ES_WIFIObject_t    EsWifiObj;
-#endif /* TERMINAL_USE */
-
-#define WIFI_FAIL 1
-#define WIFI_OK   0
-
-extern  SPI_HandleTypeDef hspi;
+#include "spi_drv.h"
 
 #ifdef USE_COM_PORT
 UART_HandleTypeDef UartHandle;
 #endif
 
-#define REG32(x) (*(volatile unsigned int *)(x))
+SPI_HandleTypeDef hspi1;
+DMA_HandleTypeDef hdma_spi1_rx;
+DMA_HandleTypeDef hdma_spi1_tx;
 
+#define REG32(x) (*(volatile unsigned int *)(x))
 
 /* Define RCC register.  */
 #define STM32L4_RCC                         0x40021000
@@ -60,23 +38,8 @@ UART_HandleTypeDef UartHandle;
 #define STM32_RNG_SR_CEIS                   0x00000020
 #define STM32_RNG_SR_SEIS                   0x00000040
 
-
-typedef enum
-{
-  WS_IDLE = 0,
-  WS_CONNECTED,
-  WS_DISCONNECTED,
-  WS_ERROR,
-} WebServerState_t;
-uint8_t  MAC_Addr[6];
-uint8_t  IP_Addr[4]; 
-uint8_t  Gateway_Addr[4];
-uint8_t  DNS1_Addr[4]; 
-uint8_t  DNS2_Addr[4]; 
 void hardware_rand_initialize(void)
 {
-
-
     /* Enable clock for the RNG.  */
     STM32L4_RCC_AHB2ENR |= STM32L4_RCC_AHB2ENR_RNGEN;
 
@@ -94,146 +57,6 @@ int hardware_rand(void)
     return STM32_RNG_DR;
 }
 
-void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim)
-{
-
-  GPIO_InitTypeDef GPIO_InitStruct;
-  if(htim->Instance==TIM8)
-  {
-  /* USER CODE BEGIN TIM8_MspPostInit 0 */
-
-  /* USER CODE END TIM8_MspPostInit 0 */
-  
-    /**TIM8 GPIO Configuration    
-    PA5     ------> TIM8_CH1N
-    PB14     ------> TIM8_CH2N 
-    */
-    GPIO_InitStruct.Pin = GPIO_PIN_5;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Alternate = GPIO_AF3_TIM8;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = GPIO_PIN_14;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Alternate = GPIO_AF3_TIM8;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN TIM8_MspPostInit 1 */
-
-  /* USER CODE END TIM8_MspPostInit 1 */
-  }
-
-}
-
-
-/* TIM8 init function */
-static void TIM8_Init(void)
-{
-  TIM_HandleTypeDef htim8;
-  TIM_ClockConfigTypeDef sClockSourceConfig;
-  TIM_MasterConfigTypeDef sMasterConfig;
-  TIM_OC_InitTypeDef sConfigOC;
-  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig;
-
-  __HAL_RCC_TIM8_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-  
-  htim8.Instance = TIM8;
-  htim8.Init.Prescaler = 19999;
-  htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 1999;
-  htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim8.Init.RepetitionCounter = 0;
-  HAL_TIM_Base_Init(&htim8);
-
-  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-  HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig);
-  HAL_TIM_PWM_Init(&htim8);
-
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig);
-
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_LOW;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
-  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-  HAL_TIM_PWM_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_1);
-
-  HAL_TIM_PWM_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_2);
-
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.BreakFilter = 0;
-  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
-  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
-  sBreakDeadTimeConfig.Break2Filter = 0;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
-  HAL_TIMEx_ConfigBreakDeadTime(&htim8, &sBreakDeadTimeConfig);
-  HAL_TIM_MspPostInit(&htim8);
-  TIM8 -> CCMR1 &= ~(TIM_CCMR1_OC1PE | TIM_CCMR1_OC2PE);
-  TIM8 -> CCR1 = 2000;
-  TIM8 -> CCR2 = 2000;
-  HAL_TIM_PWM_Start(&htim8, 2);
-  HAL_TIM_PWM_Start(&htim8, 6);
-  
-}
-
-/* Configure both LEDs to Off(0)/On(1)/Flashing(2)/Oneshot(3).  */
-void board_led_config(int status)
-{
-    if (status == 0)
-    {
-        TIM8 -> CR1 = (TIM8 -> CR1 & (~TIM_CR1_OPM)) | TIM_CR1_CEN;
-        TIM8 -> CCR1 = 2000;
-        TIM8 -> CCR2 = 2000;
-    }
-    else if (status == 1)
-    {
-        TIM8 -> CR1 = (TIM8 -> CR1 & (~TIM_CR1_OPM)) | TIM_CR1_CEN;
-        TIM8 -> CCR1 = 0;
-        TIM8 -> CCR2 = 0;
-    }
-    else if (status == 2)
-    {
-        TIM8 -> CR1 = (TIM8 -> CR1 & (~TIM_CR1_OPM)) | TIM_CR1_CEN;
-        TIM8 -> CCR1 = 999;
-        TIM8 -> CCR2 = 999;
-    }
-    else if (status == 3)
-    {
-        TIM8 -> CCR1 = 1;
-        TIM8 -> CCR2 = 1;
-        TIM8 -> CNT = 0;
-        TIM8 -> CR1 = TIM8 -> CR1 & ~TIM_CR1_CEN;
-
-        TIM8 -> CNT;
-        TIM8 -> CR1 |= TIM_CR1_OPM;
-        TIM8 -> CR1 |= TIM_CR1_CEN;
-    }
-}
-
-/**
-* @brief This function handles EXTI line[15:10] interrupts.
-*/
-void EXTI15_10_IRQHandler(void)
-{
-
-  HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_13);
-}
 /**
   * @brief  System Clock Configuration
   *         The system Clock is configured as follows :
@@ -327,7 +150,6 @@ void SystemClock_Config(void)
 
 void verify_and_correct_boot_bank(void)
 {
-
 int BFB2_bit;
 int FB_MODE_bit;
 
@@ -379,11 +201,168 @@ int FB_MODE_bit;
     }
 }
 
+/* Data Ready and Handshake should be configured from GPIO5 to GPIO9 */
+void EXTI9_5_IRQHandler(void)
+{
+    HAL_GPIO_EXTI_IRQHandler(GPIO_DATA_READY_Pin);
+    HAL_GPIO_EXTI_IRQHandler(GPIO_HANDSHAKE_Pin);
+}
+
+void SPI1_IRQHandler(void)
+{
+    HAL_SPI_IRQHandler(&hspi1);
+}
+
+void DMA1_Channel1_IRQHandler(void)
+{
+    HAL_DMA_IRQHandler(&hdma_spi1_rx);
+}
+
+void DMA1_Channe2_IRQHandler(void)
+{
+    HAL_DMA_IRQHandler(&hdma_spi1_tx);
+}
+
+void GPIO_Init(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    /* GPIO Ports Clock Enable */
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+
+    /*Configure GPIO pin Output Level */
+    HAL_GPIO_WritePin(USR_SPI_CS_GPIO_Port, USR_SPI_CS_Pin, GPIO_PIN_RESET);
+
+    /*Configure GPIO pin Output Level */
+    HAL_GPIO_WritePin(GPIO_RESET_GPIO_Port, GPIO_RESET_Pin, GPIO_PIN_SET);
+
+    /*Configure GPIO pin : CS */
+    GPIO_InitStruct.Pin = USR_SPI_CS_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(USR_SPI_CS_GPIO_Port, &GPIO_InitStruct);
+
+    /*Configure GPIO pins : data ready */
+    GPIO_InitStruct.Pin = GPIO_DATA_READY_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIO_DATA_READY_GPIO_Port, &GPIO_InitStruct);
+
+    /*Configure GPIO pins : handshake */
+    GPIO_InitStruct.Pin = GPIO_HANDSHAKE_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIO_HANDSHAKE_GPIO_Port, &GPIO_InitStruct);
+
+    /*Configure GPIO pin : reset */
+    GPIO_InitStruct.Pin = GPIO_RESET_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIO_RESET_GPIO_Port, &GPIO_InitStruct);
+
+    /* EXTI interrupt init*/
+    HAL_NVIC_SetPriority(EXTI9_5_IRQn, 15, 0);
+    HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+}
+
+void DMA_Init(void)
+{
+    /* DMA controller clock enable */
+    __HAL_RCC_DMAMUX1_CLK_ENABLE();
+    __HAL_RCC_DMA1_CLK_ENABLE();
+
+    HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+
+    HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
+}
+
+/* SPI init function */
+void SPI_Init(void)
+{
+    hspi1.Instance = SPI1;
+    hspi1.Init.Mode = SPI_MODE_MASTER;
+    hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+    hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+    hspi1.Init.CLKPolarity = SPI_POLARITY_HIGH;
+    hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+    hspi1.Init.NSS = SPI_NSS_SOFT;
+    hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+    hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+    hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+    hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+    hspi1.Init.CRCPolynomial = 10;
+    HAL_SPI_Init(&hspi1);
+}
+
+void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    if (spiHandle->Instance == SPI1)
+    {
+        __HAL_RCC_SPI1_CLK_ENABLE();
+
+        /**SPI1 GPIO Configuration
+        PB5     ------> SPI1_MOSI
+        PB4     ------> SPI1_MISO
+        PA5     ------> SPI1_SCK
+        */
+        GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_4;
+        GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+        GPIO_InitStruct.Pull = GPIO_NOPULL;
+        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+        GPIO_InitStruct.Alternate = GPIO_AF5_SPI1;
+        HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+        GPIO_InitStruct.Pin = GPIO_PIN_5;
+        GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+        GPIO_InitStruct.Pull = GPIO_NOPULL;
+        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+        GPIO_InitStruct.Alternate = GPIO_AF5_SPI1;
+        HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+        /* SPI1 DMA Init */
+        /* SPI1_RX Init */
+        hdma_spi1_rx.Instance = DMA1_Channel1;
+        hdma_spi1_tx.Init.Request = DMA_REQUEST_SPI1_RX;
+        hdma_spi1_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
+        hdma_spi1_rx.Init.PeriphInc = DMA_PINC_DISABLE;
+        hdma_spi1_rx.Init.MemInc = DMA_MINC_ENABLE;
+        hdma_spi1_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+        hdma_spi1_rx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+        hdma_spi1_rx.Init.Mode = DMA_NORMAL;
+        hdma_spi1_rx.Init.Priority = DMA_PRIORITY_LOW;
+        HAL_DMA_Init(&hdma_spi1_rx);
+
+        __HAL_LINKDMA(spiHandle,hdmarx,hdma_spi1_rx);
+
+        /* SPI1_TX Init */
+        hdma_spi1_tx.Instance = DMA1_Channel2;
+        hdma_spi1_tx.Init.Request = DMA_REQUEST_SPI1_TX;
+        hdma_spi1_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
+        hdma_spi1_tx.Init.PeriphInc = DMA_PINC_DISABLE;
+        hdma_spi1_tx.Init.MemInc = DMA_MINC_ENABLE;
+        hdma_spi1_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+        hdma_spi1_tx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+        hdma_spi1_tx.Init.Mode = DMA_NORMAL;
+        hdma_spi1_tx.Init.Priority = DMA_PRIORITY_LOW;
+        HAL_DMA_Init(&hdma_spi1_tx);
+
+        __HAL_LINKDMA(spiHandle,hdmatx,hdma_spi1_tx);
+
+        /* SPI1 interrupt Init */
+        HAL_NVIC_SetPriority(SPI1_IRQn, 0, 0);
+        HAL_NVIC_EnableIRQ(SPI1_IRQn);
+    }
+}
+
 int  board_setup(void)
 {
-
-uint32_t  retry_connect=0;
-
   /* Enable execution profile.  */
   CoreDebug -> DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT -> CTRL |= DWT_CTRL_CYCCNTENA_Msk;
@@ -413,12 +392,10 @@ uint32_t  retry_connect=0;
   
   srand(hardware_rand());
 
-  /* Configure TIM8 for LED flashing.  */
-  TIM8_Init();
-  
-  /* Configure push button.  */
-  BSP_PB_Init(BUTTON_USER, BUTTON_MODE_EXTI);
-  
+  GPIO_Init();
+  DMA_Init();
+  SPI_Init();
+
   return 0;
 }
 
@@ -464,37 +441,3 @@ size_t __read(int handle, unsigned char *buf, size_t bufSize)
 #endif
 #endif
 
-__weak void user_button_callback()
-{
-}
-
-void EXTI1_IRQHandler(void)
-{
- HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_1);
-}
-
-void SPI3_IRQHandler(void)
-{
-  HAL_SPI_IRQHandler(&hspi);
-}
-
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-  switch (GPIO_Pin)
-  {
-    case (GPIO_PIN_1):
-    {
-      SPI_WIFI_ISR();
-      break;
-    }
-    case (USER_BUTTON_PIN):
-    {
-      user_button_callback();
-      break;
-    }
-    default:
-    {
-      break;
-    }
-  }
-}

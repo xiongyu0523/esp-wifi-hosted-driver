@@ -20,8 +20,7 @@
 extern "C" {
 #endif
 
-#include "FreeRTOS.h"
-#include "queue.h"
+#include "tx_api.h"
 #include "common.h"
 #include "netdev_if.h"
 
@@ -49,7 +48,7 @@ struct netdev {
 	struct network_handle *net_handle;
 
 	/* Rx queue */
-	QueueHandle_t rx_q;
+	TX_QUEUE rx_q;
 
 	/* Driver priv */
 	void *priv;

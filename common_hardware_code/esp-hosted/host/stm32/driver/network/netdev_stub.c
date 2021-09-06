@@ -15,11 +15,11 @@
 
 #include "trace.h"
 #include "string.h"
-#include "cmsis_os.h"
 #include "netdev_if.h"
 #include "app_main.h"
 
 struct netdev *ndev_db[MAX_INTERFACE];
+static struct pbuf rx_q_buffer[MAX_INTERFACE][RX_QUEUE_SIZE];
 static uint8_t ndev_index = 0;
 
 /**
@@ -46,14 +46,12 @@ int netdev_open(netdev_handle_t ndev)
 	if (!ndev)
 		return STM_FAIL;
 
-	if (ndev->rx_q) {
-		xQueueReset(ndev->rx_q);
+	if (ndev->rx_q.tx_queue_id != TX_CLEAR_ID) {
+		(VOID)tx_queue_flush(&(ndev->rx_q));
 		return STM_OK;
 	}
 
-	ndev->rx_q = xQueueCreate(RX_QUEUE_SIZE, sizeof(struct pbuf));
-
-	if (!ndev->rx_q)
+	if (tx_queue_create(&(ndev->rx_q), "Netdev Rx Queue", sizeof(struct pbuf) / sizeof(ULONG), &rx_q_buffer[ndev_index], sizeof(rx_q_buffer[0])) != TX_SUCCESS)
 		return STM_FAIL;
 
 	ndev->state = NETDEV_STATE_UP;
@@ -73,11 +71,11 @@ void netdev_close(netdev_handle_t ndev)
 
 	ndev->state = NETDEV_STATE_DOWN;
 
-	osDelay(200);
+	tx_thread_sleep(MS_TO_TICKS(200));
 
 	/* reset queue */
-	if (ndev->rx_q)
-		xQueueReset(ndev->rx_q);
+	if (ndev->rx_q.tx_queue_id != TX_CLEAR_ID)
+		(VOID)tx_queue_flush(&(ndev->rx_q));
 
 	ndev->net_handle = NULL;
 }
@@ -245,12 +243,12 @@ int netdev_rx(netdev_handle_t dev, struct pbuf *net_buf)
 
 	if (!ndev || !net_buf) {
 		printf ("Invalid arguments\n");
-		osDelay(50);
+		tx_thread_sleep(MS_TO_TICKS(50));
 		return STM_FAIL;
 	}
 
 	if (ndev->state == NETDEV_STATE_UP) {
-		if (pdTRUE != xQueueSend(ndev->rx_q, net_buf, portMAX_DELAY)) {
+		if (TX_SUCCESS != tx_queue_send(&(ndev->rx_q), net_buf, TX_WAIT_FOREVER)) {
 			printf ("Failed to enqueue received packet\n");
 			goto done;
 		}
@@ -278,6 +276,6 @@ done:
 		free(net_buf);
 		net_buf = NULL;
 	}
-	osDelay(50);
+	tx_thread_sleep(MS_TO_TICKS(50));
 	return STM_FAIL;
 }

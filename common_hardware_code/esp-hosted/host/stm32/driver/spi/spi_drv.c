@@ -13,15 +13,16 @@
 // limitations under the License.
 
 /** Includes **/
-#include "cmsis_os.h"
+
+#include "tx_api.h"
+
 #include "string.h"
-#include "spi.h"
-#include "gpio.h"
 #include "trace.h"
 #include "spi_drv.h"
 #include "adapter.h"
 #include "serial_drv.h"
 #include "netdev_if.h"
+#include "stm32l4xx_hal.h"
 
 /** Constants/Macros **/
 #define TO_SLAVE_QUEUE_SIZE               10
@@ -29,6 +30,9 @@
 
 #define TRANSACTION_TASK_STACK_SIZE       4096
 #define PROCESS_RX_TASK_STACK_SIZE        4096
+
+#define TRANSACTION_TASK_PRIO       	  0
+#define PROCESS_RX_TASK_PRIO       		  0
 
 #define MAX_PAYLOAD_SIZE (MAX_SPI_BUFFER_SIZE-sizeof(struct esp_payload_header))
 
@@ -62,23 +66,32 @@ static struct netdev_ops esp_net_ops = {
 
 /** Exported variables **/
 
-static osSemaphoreId osSemaphore;
-static osMutexId mutex_spi_trans;
+static TX_SEMAPHORE osSemaphore;
+static TX_MUTEX	mutex_spi_trans;
 
-static osThreadId process_rx_task_id = 0;
-static osThreadId transaction_task_id = 0;
+static TX_THREAD process_rx_task_id;
+static TX_THREAD transaction_task_id;
+
+static CHAR process_rx_task_stack[PROCESS_RX_TASK_STACK_SIZE];
+static CHAR transaction_task_stack[TRANSACTION_TASK_STACK_SIZE];
 
 /* Queue declaration */
-static QueueHandle_t to_slave_queue = NULL;
-static QueueHandle_t from_slave_queue = NULL;
+
+static interface_buffer_handle_t to_slave_queue_buffer[TO_SLAVE_QUEUE_SIZE];
+static interface_buffer_handle_t from_slave_queue_buffer[FROM_SLAVE_QUEUE_SIZE];
+
+static TX_QUEUE to_slave_queue;
+static TX_QUEUE from_slave_queue;
+
+extern SPI_HandleTypeDef hspi1;
 
 /* callback of event handler */
 static void (*spi_drv_evt_handler_fp) (uint8_t);
 
 /** function declaration **/
 /** Exported functions **/
-static void transaction_task(void const* pvParameters);
-static void process_rx_task(void const* pvParameters);
+static void transaction_task(ULONG pvParameters);
+static void process_rx_task(ULONG pvParameters);
 static uint8_t * get_tx_buffer(uint8_t *is_valid_tx_buf);
 static void deinit_netdev(void);
 
@@ -152,7 +165,7 @@ static int esp_netdev_xmit(netdev_handle_t netdev, struct pbuf *net_buf)
   * @param  None
   * @retval None
   */
-static int init_netdev(void)
+static stm_ret_t init_netdev(void)
 {
 	void *ndev = NULL;
 	int i = 0;
@@ -271,13 +284,13 @@ static void set_hardware_type(void)
   */
 void stm_spi_init(void(*spi_drv_evt_handler)(uint8_t))
 {
+	UINT status;
 	stm_ret_t retval = STM_OK;
 	/* Check if supported board */
 	set_hardware_type();
 
 	/* register callback */
 	spi_drv_evt_handler_fp = spi_drv_evt_handler;
-	osSemaphoreDef(SEM);
 
 	retval = init_netdev();
 	if (retval) {
@@ -286,33 +299,31 @@ void stm_spi_init(void(*spi_drv_evt_handler)(uint8_t))
 	}
 
 	/* spi handshake semaphore */
-	osSemaphore = osSemaphoreCreate(osSemaphore(SEM) , 1);
-	assert(osSemaphore);
+	status = tx_semaphore_create(&osSemaphore, "SPI Transaction Semaphore", 1);
+	assert(status == TX_SUCCESS);
 
-	mutex_spi_trans = xSemaphoreCreateMutex();
-	assert(mutex_spi_trans);
+	status = tx_mutex_create(&mutex_spi_trans, "SPI Transaction Mutex", TX_INHERIT);
+	assert(status == TX_SUCCESS);
 
 	/* Queue - tx */
-	to_slave_queue = xQueueCreate(TO_SLAVE_QUEUE_SIZE,
-			sizeof(interface_buffer_handle_t));
-	assert(to_slave_queue);
+	status = tx_queue_create(&to_slave_queue, "Tx Queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), to_slave_queue_buffer, sizeof(to_slave_queue_buffer));
+	assert(status == TX_SUCCESS);
 
 	/* Queue - rx */
-	from_slave_queue = xQueueCreate(FROM_SLAVE_QUEUE_SIZE,
-			sizeof(interface_buffer_handle_t));
-	assert(from_slave_queue);
+	status = tx_queue_create(&from_slave_queue, "Rx Queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), from_slave_queue_buffer, sizeof(from_slave_queue_buffer));
+	assert(status == TX_SUCCESS);
 
 	/* Task - SPI transaction (full duplex) */
-	osThreadDef(transaction_thread, transaction_task,
-			osPriorityAboveNormal, 0, TRANSACTION_TASK_STACK_SIZE);
-	transaction_task_id = osThreadCreate(osThread(transaction_thread), NULL);
-	assert(transaction_task_id);
+	status = tx_thread_create(&transaction_task_id, "Transaction Thread", 
+							  transaction_task, 0, transaction_task_stack, TRANSACTION_TASK_STACK_SIZE,
+							  TRANSACTION_TASK_PRIO, TRANSACTION_TASK_PRIO, TX_NO_TIME_SLICE, TX_AUTO_START);
+	assert(status == TX_SUCCESS);
 
 	/* Task - RX processing */
-	osThreadDef(rx_thread, process_rx_task,
-			osPriorityAboveNormal, 0, PROCESS_RX_TASK_STACK_SIZE);
-	process_rx_task_id = osThreadCreate(osThread(rx_thread), NULL);
-	assert(process_rx_task_id);
+	status = tx_thread_create(&process_rx_task_id, "Tx Process Thread", 
+							  process_rx_task, 0, process_rx_task_stack, PROCESS_RX_TASK_STACK_SIZE,
+							  PROCESS_RX_TASK_PRIO, PROCESS_RX_TASK_PRIO, TX_NO_TIME_SLICE, TX_AUTO_START);
+	assert(status == TX_SUCCESS);
 }
 
 /**
@@ -326,8 +337,8 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	     (GPIO_Pin == GPIO_HANDSHAKE_Pin) )
 	{
 		/* Post semaphore to notify SPI slave is ready for next transaction */
-		if (osSemaphore != NULL) {
-			osSemaphoreRelease(osSemaphore);
+		if (osSemaphore.tx_semaphore_id != TX_CLEAR_ID) {
+			(VOID)tx_semaphore_put(&osSemaphore);
 		}
 	}
 }
@@ -369,9 +380,9 @@ static void check_and_execute_spi_transaction(void)
 			 * a. A valid tx buffer to be transmitted towards slave
 			 * b. Slave wants to send something (Rx for host)
 			 */
-			xSemaphoreTake(mutex_spi_trans, portMAX_DELAY);
+			tx_mutex_get(&mutex_spi_trans, TX_WAIT_FOREVER);
 			spi_trans_func[hardware_type](txbuff);
-			xSemaphoreGive(mutex_spi_trans);
+			tx_mutex_put(&mutex_spi_trans);
 		}
 	}
 }
@@ -407,7 +418,7 @@ stm_ret_t send_to_slave(uint8_t iface_type, uint8_t iface_num,
 	buf_handle.priv_buffer_handle = wbuffer;
 	buf_handle.free_buf_handle = free;
 
-	if (pdTRUE != xQueueSend(to_slave_queue, &buf_handle, portMAX_DELAY)) {
+	if (TX_SUCCESS != tx_queue_send(&to_slave_queue, &buf_handle, TX_WAIT_FOREVER)) {
 		printf("Failed to send buffer to_slave_queue\n\r");
 		if(wbuffer) {
 			free(wbuffer);
@@ -492,7 +503,7 @@ static stm_ret_t spi_transaction_esp32(uint8_t * txbuff)
 					rxbuff = NULL;
 				}
 				/* Give chance to other tasks */
-				osDelay(0);
+				tx_thread_sleep(1);
 
 			} else {
 
@@ -503,8 +514,8 @@ static stm_ret_t spi_transaction_esp32(uint8_t * txbuff)
 				buf_handle.if_num      = payload_header->if_num;
 				buf_handle.payload     = rxbuff + offset;
 
-				if (pdTRUE != xQueueSend(from_slave_queue,
-							&buf_handle, portMAX_DELAY)) {
+				if (TX_SUCCESS != tx_queue_send(&from_slave_queue,
+							&buf_handle, TX_WAIT_FOREVER)) {
 					printf("Failed to send buffer\n\r");
 					goto done;
 				}
@@ -610,7 +621,7 @@ static stm_ret_t spi_transaction_esp32s2(uint8_t * txbuff)
 					rxbuff = NULL;
 				}
 				/* Give chance to other tasks */
-				osDelay(0);
+				tx_thread_sleep(1);
 
 			} else {
 
@@ -621,8 +632,8 @@ static stm_ret_t spi_transaction_esp32s2(uint8_t * txbuff)
 				buf_handle.if_num      = payload_header->if_num;
 				buf_handle.payload     = rxbuff + offset;
 
-				if (pdTRUE != xQueueSend(from_slave_queue,
-							&buf_handle, portMAX_DELAY)) {
+				if (TX_SUCCESS != tx_queue_send(&from_slave_queue,
+							&buf_handle, TX_WAIT_FOREVER)) {
 					printf("Failed to send buffer\n\r");
 					goto done;
 				}
@@ -671,7 +682,7 @@ done:
   * @param  argument: Not used
   * @retval None
   */
-static void transaction_task(void const* pvParameters)
+static void transaction_task(ULONG pvParameters)
 {
 	if (hardware_type == HARDWARE_TYPE_ESP32) {
 		printf("\n\rESP-Hosted for ESP32\n\r");
@@ -684,9 +695,9 @@ static void transaction_task(void const* pvParameters)
 
 	for (;;) {
 
-		if (osSemaphore != NULL) {
+		if (osSemaphore.tx_semaphore_id != TX_CLEAR_ID) {
 			/* Wait till slave is ready for next transaction */
-			if (osSemaphoreWait(osSemaphore , osWaitForever) == osOK) {
+			if (tx_semaphore_get(&osSemaphore, TX_WAIT_FOREVER) == TX_SUCCESS) {
 				check_and_execute_spi_transaction();
 			}
 		}
@@ -698,9 +709,8 @@ static void transaction_task(void const* pvParameters)
   * @param  argument: Not used
   * @retval None
   */
-static void process_rx_task(void const* pvParameters)
+static void process_rx_task(ULONG pvParameters)
 {
-	stm_ret_t ret = STM_OK;
 	interface_buffer_handle_t buf_handle = {0};
 	uint8_t *payload = NULL;
 	struct pbuf *buffer = NULL;
@@ -709,9 +719,9 @@ static void process_rx_task(void const* pvParameters)
 	uint8_t *serial_buf = NULL;
 
 	while (1) {
-		ret = xQueueReceive(from_slave_queue, &buf_handle, portMAX_DELAY);
 
-		if (ret != pdTRUE) {
+
+		if (TX_SUCCESS != tx_queue_receive(&from_slave_queue, &buf_handle, TX_WAIT_FOREVER)) {
 			continue;
 		}
 
@@ -797,7 +807,7 @@ static uint8_t * get_tx_buffer(uint8_t *is_valid_tx_buf)
 	 * In that case only payload header with zero payload
 	 * length would be transmitted.
 	 */
-	if (pdTRUE == xQueueReceive(to_slave_queue, &buf_handle, 0)) {
+	if (TX_SUCCESS == tx_queue_receive(&to_slave_queue, &buf_handle, TX_NO_WAIT)) {
 		len = buf_handle.payload_len;
 	}
 

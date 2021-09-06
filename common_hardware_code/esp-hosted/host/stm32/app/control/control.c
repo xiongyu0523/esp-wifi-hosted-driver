@@ -16,6 +16,7 @@
 /** Includes **/
 #include "stdlib.h"
 #include "string.h"
+#include "tx_api.h"
 #include "util.h"
 #include "control.h"
 #include "trace.h"
@@ -27,6 +28,7 @@
 
 /* Constants / macro */
 #define CONTROL_PATH_TASK_STACK_SIZE        4096
+#define CONTROL_PATH_TASK_PRIO				0
 
 #define PARAM_STR_YES                       "yes"
 #define PARAM_STR_HT20                      "HT20"
@@ -49,13 +51,15 @@ static int mode = WIFI_MODE_NONE;
 static uint8_t self_station_mac[MAC_LEN] = { 0 };
 static uint8_t self_softap_mac[MAC_LEN]  = { 0 };
 
+static CHAR contral_path_task_stack[CONTROL_PATH_TASK_STACK_SIZE];
+
 /** Exported variables **/
-static osThreadId control_path_task_id = 0;
+static TX_THREAD control_path_task_id;
 
 static void (*control_path_evt_handler_fp) (uint8_t);
 
 /** Function Declarations **/
-static void control_path_task(void const *argument);
+static void control_path_task(ULONG argument);
 static int get_application_mode(void);
 static void print_configuration_parameters(void);
 
@@ -150,6 +154,8 @@ stm_ret_t get_arp_dst_ip_softap(uint32_t *soft_ip)
   */
 void control_path_init(void(*control_path_evt_handler)(uint8_t))
 {
+	UINT status;
+
 	print_configuration_parameters();
 	/* do not start control path until all tasks are in place */
 	mode = WIFI_MODE_NONE;
@@ -161,10 +167,10 @@ void control_path_init(void(*control_path_evt_handler)(uint8_t))
 	control_path_platform_init();
 
 	/* Task - application task */
-	osThreadDef(SEM_Thread, control_path_task, osPriorityAboveNormal, 0,
-			CONTROL_PATH_TASK_STACK_SIZE);
-	control_path_task_id = osThreadCreate(osThread(SEM_Thread), NULL);
-	assert(control_path_task_id);
+	status = tx_thread_create(&control_path_task_id, "Contral Path Thread", 
+							  control_path_task, 0, contral_path_task_stack, CONTROL_PATH_TASK_STACK_SIZE,
+							  CONTROL_PATH_TASK_PRIO, CONTROL_PATH_TASK_PRIO, TX_NO_TIME_SLICE, TX_AUTO_START);
+	assert(status == TX_SUCCESS);
 }
 
 /**
@@ -498,7 +504,7 @@ static int get_application_mode(void)
   * @param  argument: Not used
   * @retval None
   */
-static void control_path_task(void const *argument)
+static void control_path_task(ULONG argument)
 {
 	int ret = 0, app_mode = 0, station_connect_retry = 0, softap_start_retry = 0;
 	bool scap_ap_list = false, stop = false;
@@ -597,7 +603,7 @@ static void control_path_task(void const *argument)
 			}
 
 		} else {
-			osDelay(5000);
+			tx_thread_sleep(MS_TO_TICKS(5000));
 		}
 	}
 }

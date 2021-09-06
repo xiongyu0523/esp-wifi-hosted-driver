@@ -29,6 +29,15 @@ int control_path_platform_init(void);
  */
 int control_path_platform_deinit(void);
 /*
+ * esp_hosted_heap_int function to init heap.
+ * Input parameter
+ *      None
+ * Returns
+ *      None
+ */
+void esp_hosted_heap_init(void);
+
+/*
  * esp_hosted_malloc function allocates size bytes.
  * Input parameter
  *      size    :   Number of Bytes

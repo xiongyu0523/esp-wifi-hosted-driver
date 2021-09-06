@@ -21,14 +21,14 @@ extern "C" {
 #endif
 
 /** includes **/
-#include "cmsis_os.h"
+#include "tx_api.h"
 #include "common.h"
 
 struct serial_operations;
 
 /* serial interface handle */
 typedef struct serial_handle_s {
-	QueueHandle_t queue;
+	TX_QUEUE queue;
 	uint8_t if_type;
 	uint8_t if_num;
 	struct serial_operations *fops;
