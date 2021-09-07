@@ -83,7 +83,7 @@ static interface_buffer_handle_t from_slave_queue_buffer[FROM_SLAVE_QUEUE_SIZE];
 static TX_QUEUE to_slave_queue;
 static TX_QUEUE from_slave_queue;
 
-extern SPI_HandleTypeDef hspi1;
+SPI_HandleTypeDef hspi;
 
 /* callback of event handler */
 static void (*spi_drv_evt_handler_fp) (uint8_t);
@@ -257,7 +257,7 @@ static int is_gpio_alternate_function_set(GPIO_TypeDef  *GPIOx, uint32_t pin)
 }
 
 /**
-  * @brief  Set hardware type to ESP32 or ESP32S2 depending upon
+  * @brief  Set hardware type to ESP32 or ESP3  2S2 depending upon
   *         Alternate Function (AF) set for NSS pin (Pin11 i.e. A15)
   *         In case of ESP32, NSS is used by SPI driver, using AF
   *         For ESP32S2, NSS is manually used as GPIO to toggle NSS
@@ -287,7 +287,9 @@ void stm_spi_init(void(*spi_drv_evt_handler)(uint8_t))
 	UINT status;
 	stm_ret_t retval = STM_OK;
 	/* Check if supported board */
-	set_hardware_type();
+    set_hardware_type();
+
+    esp_hosted_heap_init();
 
 	/* register callback */
 	spi_drv_evt_handler_fp = spi_drv_evt_handler;
@@ -472,7 +474,7 @@ static stm_ret_t spi_transaction_esp32(uint8_t * txbuff)
 	}
 
 	/* SPI transaction */
-	retval = HAL_SPI_TransmitReceive(&hspi1, (uint8_t*)txbuff,
+	retval = HAL_SPI_TransmitReceive(&hspi, (uint8_t*)txbuff,
 			(uint8_t *)rxbuff, MAX_SPI_BUFFER_SIZE, HAL_MAX_DELAY);
 
 	switch(retval)
@@ -588,9 +590,9 @@ static stm_ret_t spi_transaction_esp32s2(uint8_t * txbuff)
 
 	/* SPI transaction */
 	HAL_GPIO_WritePin(USR_SPI_CS_GPIO_Port, USR_SPI_CS_Pin, GPIO_PIN_RESET);
-	retval = HAL_SPI_TransmitReceive(&hspi1, (uint8_t*)txbuff,
+	retval = HAL_SPI_TransmitReceive(&hspi, (uint8_t*)txbuff,
 			(uint8_t *)rxbuff, MAX_SPI_BUFFER_SIZE, HAL_MAX_DELAY);
-	while( hspi1.State == HAL_SPI_STATE_BUSY );
+	while( hspi.State == HAL_SPI_STATE_BUSY );
 	HAL_GPIO_WritePin(USR_SPI_CS_GPIO_Port, USR_SPI_CS_Pin, GPIO_PIN_SET);
 
 	switch(retval)

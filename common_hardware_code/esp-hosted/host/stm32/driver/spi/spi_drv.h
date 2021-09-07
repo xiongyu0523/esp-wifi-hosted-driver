@@ -22,25 +22,35 @@ extern "C" {
 
 /** Includes **/
 #include "common.h"
+#include "stm32l4xx_hal.h"
 
 /** constants/macros **/
 #define MAX_NETWORK_INTERFACES  2
 #define STA_INTERFACE           "ESP_STATION"
 #define SOFTAP_INTERFACE        "ESP_SOFTAP"
 
-/* NSS or CS0 configuration (Pin 11) */
-/* In case of different board than STM32F469I,
- * User need to update SPI NSS pin as per hardware*/
-#define USR_SPI_CS_Pin 				GPIO_PIN_15
-#define USR_SPI_CS_GPIO_Port 		GPIOA
-#define GPIO_DATA_READY_Pin 		GPIO_PIN_7
-#define GPIO_DATA_READY_GPIO_Port 	GPIOC
-#define GPIO_DATA_READY_EXTI_IRQn 	EXTI9_5_IRQn
-#define GPIO_HANDSHAKE_Pin 			GPIO_PIN_6
-#define GPIO_HANDSHAKE_GPIO_Port 	GPIOC
-#define GPIO_HANDSHAKE_EXTI_IRQn 	EXTI9_5_IRQn
-#define GPIO_RESET_Pin 				GPIO_PIN_13
-#define GPIO_RESET_GPIO_Port 		GPIOB
+#define USR_SPI_CS_Pin                      GPIO_PIN_2
+#define USR_SPI_CS_GPIO_Port                GPIOA
+#define GPIO_DATA_READY_Pin                 GPIO_PIN_0
+#define GPIO_DATA_READY_GPIO_Port           GPIOB
+#define GPIO_DATA_READY_EXTI_IRQn           EXTI0_IRQn
+#define GPIO_DATA_READY_EXTI_IRQn_Handler   EXTI0_IRQHandler
+#define GPIO_HANDSHAKE_Pin                  GPIO_PIN_14
+#define GPIO_HANDSHAKE_GPIO_Port            GPIOD
+#define GPIO_HANDSHAKE_EXTI_IRQn            EXTI15_10_IRQn
+#define GPIO_HANDSHAKE_EXTI_IRQn_Handler    EXTI15_10_IRQHandler
+#define GPIO_RESET_Pin                      GPIO_PIN_3
+#define GPIO_RESET_GPIO_Port                GPIOA
+#define GPIO_SPI_Pins                       (GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6)
+#define GPIO_SPI_GPIO_Port                  GPIOA
+#define GPIO_SPI_AF                         GPIO_AF5_SPI1
+
+#define SPIn                                SPI1
+#define SPIn_IRQn                           SPI1_IRQn
+#define SPIn_IRQHandler                     SPI1_IRQHandler
+#define __HAL_RCC_SPIn_CLK_ENABLE           __HAL_RCC_SPI1_CLK_ENABLE
+#define DMA_REQUEST_SPIn_RX                 DMA_REQUEST_SPI1_RX
+#define DMA_REQUEST_SPIn_TX                 DMA_REQUEST_SPI1_TX
 
 typedef enum spi_drv_events_s {
 	SPI_DRIVER_ACTIVE
@@ -62,6 +72,8 @@ struct esp_private {
 	uint8_t     if_num;
 	void        *netdev;
 };
+
+extern SPI_HandleTypeDef hspi;
 
 #ifdef __cplusplus
 }
