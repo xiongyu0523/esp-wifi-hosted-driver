@@ -298,11 +298,13 @@ static void arping_task(ULONG arg)
 	get_arp_dst_ip_softap(&softap_dest_ip);
 
 	while (1) {
+#if 0
 		if (sta_handle)
 			send_arp_req(sta_handle, get_self_mac_station(), &sta_ip, dst_mac_bytes, &sta_dest_ip);
 
 		if(ap_handle)
 			send_arp_req(ap_handle, get_self_mac_softap(), &softap_ip, dst_mac_bytes, &softap_dest_ip);
+#endif
 
 		tx_thread_sleep(MS_TO_TICKS(1000));
 	}

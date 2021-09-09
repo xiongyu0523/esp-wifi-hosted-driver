@@ -39,7 +39,7 @@
 #define ARPING_OFFSET_SRC_IP             28
 #define ARPING_OFFSET_DST_IP             38
 #define ARPING_OFFSET_OPCODE             20
-#define ARPING_MAX_PKT_SIZE              42
+#define ARPING_MAX_PKT_SIZE              (14 + 28)
 
 enum {
 	ARP_REQ = 1,
@@ -49,18 +49,22 @@ enum {
 
 /** Exported variables **/
 
+// A sample of arp payload, which will be sent via network_write
 static uint8_t arp_req_tx[ARPING_MAX_PKT_SIZE] =
 {
-/* arping */
-	// dst mac (0th byte)   0xa0, 0x88, 0xb4, 0xe5, 0xd5, 0x38 //laptop
-	// src mac (6th byte)   0x3c, 0x71, 0xbf, 0x9a, 0xbc, 0xb8 //stm
-	// src mac (22th byte)  0x3c, 0x71, 0xbf, 0x9a, 0xbc, 0xb8 //stm
-	// src ip  (28th byte)  192.168.1.233                      //stm
-	// dst ip  (38th byte)  192.168.1.206                      //laptop
-/*0000*/   0xa0, 0x88, 0xb4, 0xe5, 0xd5, 0x38, 0x3c, 0x71, 0xbf, 0x9a, 0xbc, 0xb8, 0x08, 0x06, 0x00, 0x01,
-/*0010*/   0x08, 0x00, 0x06, 0x04, 0x00, 0x01, 0x3c, 0x71, 0xbf, 0x9a, 0xbc, 0xb8,  192,  168,    1,  233,
-/*0020*/   0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  192,  168,    1,  206,
+	0xa0, 0x88, 0xb4, 0xe5, 0xd5, 0x38,		// Ethernet Frame: Src MAC (MCU)
+	0x3c, 0x71, 0xbf, 0x9a, 0xbc, 0xb8, 	// Ethernet Frame: Dst Mac (PC)
+	0x08, 0x06, 							// Ethernet Frame: Frame Type ARP (0x0806)
 
+	0x00, 0x01,								// ARP Frame: HTYPE, Hardware Type (1 == Ethernet)
+	0x08, 0x00, 							// ARP Frame: PTYPE, Protocol Type (0x0800 == IPv4)
+	0x06,									// ARP Frame: HLEN, Hardware address length (6 bytes)
+	0x04, 									// ARP Frame: PLEN, Protocol address length (4 bytes)
+	0x00, 0x01, 							// ARP Frame: OPER, Opeartion (0x0001 == request, 0x0002 == response)
+	0x3c, 0x71, 0xbf, 0x9a, 0xbc, 0xb8,  	// ARP Frame: SHA, Sender pardware address 
+	192, 168, 1, 233, 						// ARP Frame: SPA, Sender protocol address
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  	// ARP Frame: THA, Target pardware address
+	192, 168, 1, 206						// ARP Frame: TPA, Target protocol address
 };
 
 

@@ -301,28 +301,30 @@ void stm_spi_init(void(*spi_drv_evt_handler)(uint8_t))
 	}
 
 	/* spi handshake semaphore */
-	status = tx_semaphore_create(&osSemaphore, "SPI Transaction Semaphore", 1);
+	status = tx_semaphore_create(&osSemaphore, "osSemaphore", 1);
 	assert(status == TX_SUCCESS);
 
-	status = tx_mutex_create(&mutex_spi_trans, "SPI Transaction Mutex", TX_INHERIT);
+	status = tx_mutex_create(&mutex_spi_trans, "mutex_spi_trans", TX_INHERIT);
 	assert(status == TX_SUCCESS);
+
+	printf("size of interface_buffer_handle_t = %d bytes ", sizeof(interface_buffer_handle_t));
 
 	/* Queue - tx */
-	status = tx_queue_create(&to_slave_queue, "Tx Queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), to_slave_queue_buffer, sizeof(to_slave_queue_buffer));
+	status = tx_queue_create(&to_slave_queue, "to_slave_queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), to_slave_queue_buffer, sizeof(to_slave_queue_buffer));
 	assert(status == TX_SUCCESS);
 
 	/* Queue - rx */
-	status = tx_queue_create(&from_slave_queue, "Rx Queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), from_slave_queue_buffer, sizeof(from_slave_queue_buffer));
+	status = tx_queue_create(&from_slave_queue, "from_slave_queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), from_slave_queue_buffer, sizeof(from_slave_queue_buffer));
 	assert(status == TX_SUCCESS);
 
 	/* Task - SPI transaction (full duplex) */
-	status = tx_thread_create(&transaction_task_id, "Transaction Thread", 
+	status = tx_thread_create(&transaction_task_id, "transaction_task", 
 							  transaction_task, 0, transaction_task_stack, TRANSACTION_TASK_STACK_SIZE,
 							  TRANSACTION_TASK_PRIO, TRANSACTION_TASK_PRIO, TX_NO_TIME_SLICE, TX_AUTO_START);
 	assert(status == TX_SUCCESS);
 
 	/* Task - RX processing */
-	status = tx_thread_create(&process_rx_task_id, "Tx Process Thread", 
+	status = tx_thread_create(&process_rx_task_id, "process_rx_task", 
 							  process_rx_task, 0, process_rx_task_stack, PROCESS_RX_TASK_STACK_SIZE,
 							  PROCESS_RX_TASK_PRIO, PROCESS_RX_TASK_PRIO, TX_NO_TIME_SLICE, TX_AUTO_START);
 	assert(status == TX_SUCCESS);
@@ -339,9 +341,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	     (GPIO_Pin == GPIO_HANDSHAKE_Pin) )
 	{
 		/* Post semaphore to notify SPI slave is ready for next transaction */
-		if (osSemaphore.tx_semaphore_id != TX_CLEAR_ID) {
-			(VOID)tx_semaphore_put(&osSemaphore);
-		}
+		(VOID)tx_semaphore_put(&osSemaphore);
 	}
 }
 
@@ -386,6 +386,8 @@ static void check_and_execute_spi_transaction(void)
 			spi_trans_func[hardware_type](txbuff);
 			tx_mutex_put(&mutex_spi_trans);
 		}
+	} else {
+		printf("esp is not ready to comm\r\n");
 	}
 }
 
@@ -419,6 +421,9 @@ stm_ret_t send_to_slave(uint8_t iface_type, uint8_t iface_num,
 	buf_handle.payload = wbuffer;
 	buf_handle.priv_buffer_handle = wbuffer;
 	buf_handle.free_buf_handle = free;
+
+	//printf("tx len = %d\r\n", buf_handle.payload_len);
+	//printf("tx ptr = 0x%X\r\n", buf_handle.payload);
 
 	if (TX_SUCCESS != tx_queue_send(&to_slave_queue, &buf_handle, TX_WAIT_FOREVER)) {
 		printf("Failed to send buffer to_slave_queue\n\r");
@@ -634,6 +639,8 @@ static stm_ret_t spi_transaction_esp32s2(uint8_t * txbuff)
 				buf_handle.if_num      = payload_header->if_num;
 				buf_handle.payload     = rxbuff + offset;
 
+				printf("payload = 0x%X, payload_len = %d\r\n", buf_handle.payload, buf_handle.payload_len);
+
 				if (TX_SUCCESS != tx_queue_send(&from_slave_queue,
 							&buf_handle, TX_WAIT_FOREVER)) {
 					printf("Failed to send buffer\n\r");
@@ -696,12 +703,9 @@ static void transaction_task(ULONG pvParameters)
 	}
 
 	for (;;) {
-
-		if (osSemaphore.tx_semaphore_id != TX_CLEAR_ID) {
-			/* Wait till slave is ready for next transaction */
-			if (tx_semaphore_get(&osSemaphore, TX_WAIT_FOREVER) == TX_SUCCESS) {
-				check_and_execute_spi_transaction();
-			}
+		/* Wait till slave is ready for next transaction */
+		if (tx_semaphore_get(&osSemaphore, TX_WAIT_FOREVER) == TX_SUCCESS) {
+			check_and_execute_spi_transaction();
 		}
 	}
 }
@@ -736,6 +740,7 @@ static void process_rx_task(ULONG pvParameters)
 			serial_buf = (uint8_t *)malloc(buf_handle.payload_len);
 			assert(serial_buf);
 
+			printf("1: dst ptr = 0x%X, src ptr = 0x%X, len = %d\r\n", serial_buf, payload, buf_handle.payload_len);
 			memcpy(serial_buf, payload, buf_handle.payload_len);
 
 			/* serial interface path */
@@ -753,6 +758,8 @@ static void process_rx_task(ULONG pvParameters)
 				buffer->len = buf_handle.payload_len;
 				buffer->payload = malloc(buf_handle.payload_len);
 				assert(buffer->payload);
+
+				printf("2: dst ptr = 0x%X, src ptr = 0x%X, len = %d\r\n", buffer->payload, buf_handle.payload, buf_handle.payload_len);
 
 				memcpy(buffer->payload, buf_handle.payload,
 						buf_handle.payload_len);
@@ -810,6 +817,10 @@ static uint8_t * get_tx_buffer(uint8_t *is_valid_tx_buf)
 	 * length would be transmitted.
 	 */
 	if (TX_SUCCESS == tx_queue_receive(&to_slave_queue, &buf_handle, TX_NO_WAIT)) {
+		
+		//printf("rx len = %d\r\n", buf_handle.payload_len);
+		//printf("rx ptr = 0x%X\r\n", buf_handle.payload);
+
 		len = buf_handle.payload_len;
 	}
 
@@ -834,6 +845,7 @@ static uint8_t * get_tx_buffer(uint8_t *is_valid_tx_buf)
 		payload_header->if_num  = buf_handle.if_num;
 		payload_header->reserved1 = 0;
 
+		printf("3: dst ptr = 0x%X, src ptr = 0x%X, len = %d\r\n", payload, buf_handle.payload, min(len, MAX_PAYLOAD_SIZE));
 		memcpy(payload, buf_handle.payload, min(len, MAX_PAYLOAD_SIZE));
 	}
 

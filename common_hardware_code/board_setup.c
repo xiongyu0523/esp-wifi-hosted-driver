@@ -297,7 +297,7 @@ void SPI_Init(void)
     hspi.Init.CLKPolarity = SPI_POLARITY_HIGH;
     hspi.Init.CLKPhase = SPI_PHASE_1EDGE;
     hspi.Init.NSS = SPI_NSS_SOFT;
-    hspi.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+    hspi.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
     hspi.Init.FirstBit = SPI_FIRSTBIT_MSB;
     hspi.Init.TIMode = SPI_TIMODE_DISABLE;
     hspi.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
