@@ -49,6 +49,7 @@
 #include <string.h>	/* for strcmp, strlen, memcpy, memmove, memset */
 
 #include "protobuf-c.h"
+#include "platform_wrapper.h"
 
 #define TRUE				1
 #define FALSE				0
@@ -148,13 +149,13 @@ protobuf_c_version_number(void)
 static void *
 system_alloc(void *allocator_data, size_t size)
 {
-	return malloc(size);
+	return esp_hosted_malloc(size);
 }
 
 static void
 system_free(void *allocator_data, void *data)
 {
-	free(data);
+	esp_hosted_free(data);
 }
 
 static inline void *

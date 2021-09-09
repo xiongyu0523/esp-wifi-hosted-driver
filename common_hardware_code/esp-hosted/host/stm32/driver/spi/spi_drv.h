@@ -41,7 +41,7 @@ extern "C" {
 #define GPIO_HANDSHAKE_EXTI_IRQn_Handler    EXTI15_10_IRQHandler
 #define GPIO_RESET_Pin                      GPIO_PIN_3
 #define GPIO_RESET_GPIO_Port                GPIOA
-#define GPIO_SPI_Pins                       (GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6)
+#define GPIO_SPI_Pins                       (GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7)
 #define GPIO_SPI_GPIO_Port                  GPIOA
 #define GPIO_SPI_AF                         GPIO_AF5_SPI1
 

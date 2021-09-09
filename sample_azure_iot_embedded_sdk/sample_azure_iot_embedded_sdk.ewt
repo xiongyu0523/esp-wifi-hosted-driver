@@ -2971,7 +2971,7 @@
             <name>$PROJ_DIR$\nx_azure_iot_ciphersuites.c</name>
         </file>
         <file>
-            <name>$PROJ_DIR$\nx_driver_esp_offload.c</name>
+            <name>$PROJ_DIR$\nx_driver_esp_hosted.c</name>
         </file>
         <file>
             <name>$PROJ_DIR$\sample_azure_iot_embedded_sdk.c</name>

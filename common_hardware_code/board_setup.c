@@ -220,7 +220,7 @@ void DMA1_Channel1_IRQHandler(void)
     HAL_DMA_IRQHandler(&hdma_spi_rx);
 }
 
-void DMA1_Channe2_IRQHandler(void)
+void DMA1_Channel2_IRQHandler(void)
 {
     HAL_DMA_IRQHandler(&hdma_spi_tx);
 }
@@ -240,18 +240,19 @@ void GPIO_Init(void)
     __HAL_RCC_GPIOH_CLK_ENABLE();
     __HAL_RCC_GPIOI_CLK_ENABLE();         
 
-    /*Configure GPIO pin Output Level */
-    HAL_GPIO_WritePin(USR_SPI_CS_GPIO_Port, USR_SPI_CS_Pin, GPIO_PIN_RESET);
-
-    /*Configure GPIO pin Output Level */
+    /*Configure GPIO pin : reset */
+    GPIO_InitStruct.Pin = GPIO_RESET_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIO_RESET_GPIO_Port, &GPIO_InitStruct);
     HAL_GPIO_WritePin(GPIO_RESET_GPIO_Port, GPIO_RESET_Pin, GPIO_PIN_SET);
 
     /*Configure GPIO pin : CS */
     GPIO_InitStruct.Pin = USR_SPI_CS_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(USR_SPI_CS_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(USR_SPI_CS_GPIO_Port, USR_SPI_CS_Pin, GPIO_PIN_SET);
 
     /*Configure GPIO pins : data ready */
     GPIO_InitStruct.Pin = GPIO_DATA_READY_Pin;
@@ -264,13 +265,6 @@ void GPIO_Init(void)
     GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIO_HANDSHAKE_GPIO_Port, &GPIO_InitStruct);
-
-    /*Configure GPIO pin : reset */
-    GPIO_InitStruct.Pin = GPIO_RESET_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIO_RESET_GPIO_Port, &GPIO_InitStruct);
 
     /* EXTI interrupt init*/
     HAL_NVIC_SetPriority(GPIO_DATA_READY_EXTI_IRQn, 15, 0);

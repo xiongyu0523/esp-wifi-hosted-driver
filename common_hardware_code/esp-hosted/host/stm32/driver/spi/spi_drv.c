@@ -56,7 +56,7 @@ static int esp_netdev_close(netdev_handle_t netdev);
 static int esp_netdev_xmit(netdev_handle_t netdev, struct pbuf *net_buf);
 
 static struct esp_private *esp_priv[MAX_NETWORK_INTERFACES];
-static uint8_t hardware_type = HARDWARE_TYPE_INVALID;
+static uint8_t hardware_type = HARDWARE_TYPE_ESP32S2_ESP32C3;
 
 static struct netdev_ops esp_net_ops = {
 	.netdev_open = esp_netdev_open,
@@ -287,7 +287,7 @@ void stm_spi_init(void(*spi_drv_evt_handler)(uint8_t))
 	UINT status;
 	stm_ret_t retval = STM_OK;
 	/* Check if supported board */
-    set_hardware_type();
+    //set_hardware_type();
 
     esp_hosted_heap_init();
 

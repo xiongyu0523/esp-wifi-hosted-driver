@@ -56,17 +56,17 @@ static void reset_slave(void)
 	__HAL_RCC_GPIOB_CLK_ENABLE();
 
 	/* TODO: make this pin configurable from project config */
-	GPIO_InitStruct.Pin = GPIO_PIN_13;
+	GPIO_InitStruct.Pin = GPIO_RESET_Pin;
 	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
 	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+	HAL_GPIO_Init(GPIO_RESET_GPIO_Port, &GPIO_InitStruct);
 
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIO_RESET_GPIO_Port, GPIO_RESET_Pin, GPIO_PIN_RESET);
 	hard_delay(50);
 
 	/* revert to initial state */
 	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+	HAL_GPIO_Init(GPIO_RESET_GPIO_Port, &GPIO_InitStruct);
 
 	/* stop spi transactions short time to avoid slave sync issues */
 	hard_delay(50000);
