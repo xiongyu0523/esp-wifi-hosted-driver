@@ -40,25 +40,16 @@ char print_buff[MAX_SPI_BUFFER_SIZE*3];
 
 uint16_t hton_short (uint16_t x)
 {
-#if BYTE_ORDER == BIG_ENDIAN
-  return x;
-#elif BYTE_ORDER == LITTLE_ENDIAN
   uint16_t val = 0;
 
   val = (x &0x00FF)<<8;
   val |= (x &0xFF00)>>8;
 
   return val;
-#else
-# error "not able to identify endianness"
-#endif
 }
 
 uint32_t hton_long (uint32_t x)
 {
-#if BYTE_ORDER == BIG_ENDIAN
-  return x;
-#elif BYTE_ORDER == LITTLE_ENDIAN
     uint32_t val = (x&0xFF000000) >> 24;
 
     val |= (x&0x00FF0000) >> 8;
@@ -66,9 +57,6 @@ uint32_t hton_long (uint32_t x)
     val |= (x&0x000000FF) << 24;
 
     return val;
-#else
-# error "not able to identify endianness"
-#endif
 }
 
 /**

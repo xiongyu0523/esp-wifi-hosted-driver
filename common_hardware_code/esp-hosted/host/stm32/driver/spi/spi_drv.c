@@ -301,28 +301,28 @@ void stm_spi_init(void(*spi_drv_evt_handler)(uint8_t))
 	}
 
 	/* spi handshake semaphore */
-	status = tx_semaphore_create(&osSemaphore, "SPI Transaction Semaphore", 1);
+	status = tx_semaphore_create(&osSemaphore, "osSemaphore", 1);
 	assert(status == TX_SUCCESS);
 
-	status = tx_mutex_create(&mutex_spi_trans, "SPI Transaction Mutex", TX_INHERIT);
+	status = tx_mutex_create(&mutex_spi_trans, "mutex_spi_trans", TX_INHERIT);
 	assert(status == TX_SUCCESS);
 
 	/* Queue - tx */
-	status = tx_queue_create(&to_slave_queue, "Tx Queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), to_slave_queue_buffer, sizeof(to_slave_queue_buffer));
+	status = tx_queue_create(&to_slave_queue, "to_slave_queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), to_slave_queue_buffer, sizeof(to_slave_queue_buffer));
 	assert(status == TX_SUCCESS);
 
 	/* Queue - rx */
-	status = tx_queue_create(&from_slave_queue, "Rx Queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), from_slave_queue_buffer, sizeof(from_slave_queue_buffer));
+	status = tx_queue_create(&from_slave_queue, "from_slave_queue", sizeof(interface_buffer_handle_t) / sizeof(ULONG), from_slave_queue_buffer, sizeof(from_slave_queue_buffer));
 	assert(status == TX_SUCCESS);
 
 	/* Task - SPI transaction (full duplex) */
-	status = tx_thread_create(&transaction_task_id, "Transaction Thread", 
+	status = tx_thread_create(&transaction_task_id, "transaction_task", 
 							  transaction_task, 0, transaction_task_stack, TRANSACTION_TASK_STACK_SIZE,
 							  TRANSACTION_TASK_PRIO, TRANSACTION_TASK_PRIO, TX_NO_TIME_SLICE, TX_AUTO_START);
 	assert(status == TX_SUCCESS);
 
 	/* Task - RX processing */
-	status = tx_thread_create(&process_rx_task_id, "Tx Process Thread", 
+	status = tx_thread_create(&process_rx_task_id, "process_rx_task", 
 							  process_rx_task, 0, process_rx_task_stack, PROCESS_RX_TASK_STACK_SIZE,
 							  PROCESS_RX_TASK_PRIO, PROCESS_RX_TASK_PRIO, TX_NO_TIME_SLICE, TX_AUTO_START);
 	assert(status == TX_SUCCESS);
@@ -339,9 +339,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	     (GPIO_Pin == GPIO_HANDSHAKE_Pin) )
 	{
 		/* Post semaphore to notify SPI slave is ready for next transaction */
-		if (osSemaphore.tx_semaphore_id != TX_CLEAR_ID) {
-			(VOID)tx_semaphore_put(&osSemaphore);
-		}
+		(VOID)tx_semaphore_put(&osSemaphore);
 	}
 }
 
@@ -696,12 +694,9 @@ static void transaction_task(ULONG pvParameters)
 	}
 
 	for (;;) {
-
-		if (osSemaphore.tx_semaphore_id != TX_CLEAR_ID) {
-			/* Wait till slave is ready for next transaction */
-			if (tx_semaphore_get(&osSemaphore, TX_WAIT_FOREVER) == TX_SUCCESS) {
-				check_and_execute_spi_transaction();
-			}
+		/* Wait till slave is ready for next transaction */
+		if (tx_semaphore_get(&osSemaphore, TX_WAIT_FOREVER) == TX_SUCCESS) {
+			check_and_execute_spi_transaction();
 		}
 	}
 }

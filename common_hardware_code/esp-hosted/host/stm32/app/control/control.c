@@ -167,7 +167,7 @@ void control_path_init(void(*control_path_evt_handler)(uint8_t))
 	control_path_platform_init();
 
 	/* Task - application task */
-	status = tx_thread_create(&control_path_task_id, "Contral Path Thread", 
+	status = tx_thread_create(&control_path_task_id, "control_path_task", 
 							  control_path_task, 0, contral_path_task_stack, CONTROL_PATH_TASK_STACK_SIZE,
 							  CONTROL_PATH_TASK_PRIO, CONTROL_PATH_TASK_PRIO, TX_NO_TIME_SLICE, TX_AUTO_START);
 	assert(status == TX_SUCCESS);

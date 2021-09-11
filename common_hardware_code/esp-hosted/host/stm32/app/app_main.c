@@ -148,7 +148,7 @@ void Arping_test(void)
 	stm_spi_init(spi_driver_event_handler);
 
 	/* This thread's priority shouls be >= spi driver's transaction task priority */
-	status = tx_thread_create(&arping_task_id, "Arping Thread", 
+	status = tx_thread_create(&arping_task_id, "arping_task", 
 							  arping_task, 0, arping_task_stack, ARPING_PATH_TASK_STACK_SIZE,
 							  ARPING_TASK_PRIO, ARPING_TASK_PRIO, TX_NO_TIME_SLICE, TX_AUTO_START);
 	assert(status == TX_SUCCESS);

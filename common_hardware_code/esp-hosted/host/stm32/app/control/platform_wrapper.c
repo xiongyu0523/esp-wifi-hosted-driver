@@ -42,7 +42,7 @@ int control_path_platform_init(void)
 	UINT status;
 
 	/* control path semaphore */
-	status = tx_semaphore_create(&readSemaphore, "Read Semaphore", 1);
+	status = tx_semaphore_create(&readSemaphore, "readSemaphore", 1);
 	assert(status == TX_SUCCESS);
 
 	/* grab the semaphore, so that task will be mandated to wait on semaphore */

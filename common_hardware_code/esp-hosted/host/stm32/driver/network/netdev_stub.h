@@ -50,6 +50,8 @@ struct netdev {
 	/* Rx queue */
 	TX_QUEUE rx_q;
 
+  void *rx_q_buffer;
+
 	/* Driver priv */
 	void *priv;
 };
