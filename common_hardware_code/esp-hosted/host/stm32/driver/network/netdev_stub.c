@@ -19,7 +19,6 @@
 #include "app_main.h"
 
 struct netdev *ndev_db[MAX_INTERFACE];
-static struct pbuf rx_q_buffer[MAX_INTERFACE][RX_QUEUE_SIZE];
 static uint8_t ndev_index = 0;
 
 /**
@@ -51,7 +50,8 @@ int netdev_open(netdev_handle_t ndev)
 		return STM_OK;
 	}
 
-	if (tx_queue_create(&(ndev->rx_q), "Netdev Rx Queue", sizeof(struct pbuf) / sizeof(ULONG), &rx_q_buffer[ndev_index], sizeof(rx_q_buffer[0])) != TX_SUCCESS)
+	ndev->rx_q_buffer = malloc(RX_QUEUE_SIZE * sizeof(struct pbuf));
+	if (tx_queue_create(&(ndev->rx_q), ndev->name, sizeof(struct pbuf) / sizeof(ULONG), ndev->rx_q_buffer, RX_QUEUE_SIZE * sizeof(struct pbuf)) != TX_SUCCESS)
 		return STM_FAIL;
 
 	ndev->state = NETDEV_STATE_UP;
@@ -74,8 +74,8 @@ void netdev_close(netdev_handle_t ndev)
 	tx_thread_sleep(MS_TO_TICKS(200));
 
 	/* reset queue */
-	if (ndev->rx_q.tx_queue_id != TX_CLEAR_ID)
-		(VOID)tx_queue_flush(&(ndev->rx_q));
+	(VOID)tx_queue_delete(&(ndev->rx_q));
+	free(ndev->rx_q_buffer);
 
 	ndev->net_handle = NULL;
 }
