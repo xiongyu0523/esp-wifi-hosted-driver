@@ -53,10 +53,8 @@
    All the defines for specific project should be added under this line. */
 
 #define NX_ENABLE_INTERFACE_CAPABILITY
-#define SAMPLE_DHCP_DISABLE
 #define SAMPLE_BOARD_SETUP board_setup
 #define SAMPLE_NETWORK_DRIVER nx_driver_esp_hosted
-#define SAMPLE_NETWORK_CONFIGURE sample_network_configure
 
 /* NetX */
 #define NX_DNS_CLIENT_USER_CREATE_PACKET_POOL

@@ -17,6 +17,8 @@
 #include "nxd_sntp_client.h"
 #include "nx_secure_tls_api.h"
 
+#include "nx_driver_esp_hosted.h"
+
 /* Include the sample.  */
 extern VOID sample_entry(NX_IP* ip_ptr, NX_PACKET_POOL* pool_ptr, NX_DNS* dns_ptr, UINT (*unix_time_callback)(ULONG *unix_time));
 
@@ -135,6 +137,8 @@ static ULONG sample_arp_cache_area[SAMPLE_ARP_CACHE_SIZE / sizeof(ULONG)];
 #endif
 static ULONG sample_helper_thread_stack[SAMPLE_HELPER_STACK_SIZE / sizeof(ULONG)];
 
+static nx_wifi_info_t wifi_info = {.ssid = WIFI_SSID, .password = WIFI_PASSWORD};
+
 static const CHAR *sntp_servers[] =
 {
     "0.pool.ntp.org",
@@ -170,8 +174,6 @@ void SAMPLE_BOARD_SETUP();
 #ifdef SAMPLE_NETWORK_CONFIGURE
 void SAMPLE_NETWORK_CONFIGURE(const CHAR *ssid_ptr, const CHAR *pwd_ptr, NX_IP *ip_ptr, ULONG *dns_address);
 #endif
-
-extern void Arping_test(void);
 
 /* Define main entry point.  */
 int main(void)
@@ -220,6 +222,9 @@ UINT  status;
         printf("nx_ip_create fail: %u\r\n", status);
         return;
     }
+
+    // Set wifi network information
+    ip_0.nx_ip_interface[0].nx_interface_additional_link_info = (void*)&wifi_info;
 
 #ifndef SAMPLE_NETWORK_CONFIGURE
     /* Enable ARP and supply ARP cache memory for IP Instance 0.  */
@@ -296,12 +301,6 @@ UINT    dns_server_address_size = sizeof(dns_server_address);
 #endif
 
     NX_PARAMETER_NOT_USED(parameter);
-    
-    Arping_test();
-    
-    while(1) {
-        tx_thread_sleep(100);
-    }
 
 #ifndef SAMPLE_DHCP_DISABLE
     dhcp_wait();

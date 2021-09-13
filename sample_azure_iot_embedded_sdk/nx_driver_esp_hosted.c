@@ -1,923 +1,504 @@
-/**************************************************************************/
-/*                                                                        */
-/*       Copyright (c) Microsoft Corporation. All rights reserved.        */
-/*                                                                        */
-/*       This software is licensed under the Microsoft Software License   */
-/*       Terms for Microsoft Azure RTOS. Full text of the license can be  */
-/*       found in the LICENSE file at https://aka.ms/AzureRTOS_EULA       */
-/*       and in the root directory of this software.                      */
-/*                                                                        */
-/**************************************************************************/
-
-/* Include necessary system files.  */
-
 #include "nx_api.h"
+#include "nx_arp.h"
+#include "nx_rarp.h"
 
+#include "spi_drv.h"
+#include "netdev_api.h"
+#include "commands.h"
+#include "common.h"
+#include "stm32l4xx_hal.h"
 
-/* Define the Link MTU. Note this is not the same as the IP MTU.  The Link MTU
+#include "nx_driver_esp_hosted.h"
+
+/* Define the Link MTU. Note this is not the same as the IP MTU. The Link MTU
    includes the addition of the Physical Network header (usually Ethernet). This
    should be larger than the IP instance MTU by the size of the physical header. */
-#define NX_LINK_MTU      1514
+#define NX_LINK_MTU             1514
+#define NX_ETHERNET_SIZE        14
+#define NX_ETHERNET_IP          0x0800
+#define NX_ETHERNET_ARP         0x0806
+#define NX_ETHERNET_RARP        0x8035
+#define NX_ETHERNET_IPV6        0x86DD
+#define NX_DRIVER_ERROR         90
 
+#define MAC_STR_LEN             18
+#define NX_DRIVER_JOIN_MAX_CNT  3
 
-/* Define Ethernet address format.  This is prepended to the incoming IP
-   and ARP/RARP messages.  The frame beginning is 14 bytes, but for speed
-   purposes, we are going to assume there are 16 bytes free in front of the
-   prepend pointer and that the prepend pointer is 32-bit aligned.
+#define NX_DRIVER_ETHERNET_HEADER_REMOVE(p)   \
+{   \
+    p -> nx_packet_prepend_ptr =  p -> nx_packet_prepend_ptr + NX_ETHERNET_SIZE;  \
+    p -> nx_packet_length =  p -> nx_packet_length - NX_ETHERNET_SIZE;    \
+} 
 
-    Byte Offset     Size            Meaning
+static NX_PACKET_POOL   *_pool_ptr = NULL;
+static NX_IP            *_ip_ptr   = NULL;
 
-        0           6           Destination Ethernet Address
-        6           6           Source Ethernet Address
-        12          2           Ethernet Frame Type, where:
+static TX_SEMAPHORE     _device_ready_semphr;
+struct network_handle   *sta_handle;
 
-                                        0x0800 -> IP Datagram
-                                        0x0806 -> ARP Request/Reply
-                                        0x0835 -> RARP request reply
+UCHAR   _nx_driver_hardware_address[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x56};  
 
-        42          18          Padding on ARP and RARP messages only.  */
+/* Define the routines for processing each driver entry request */
+static UINT _nx_driver_initialize(NX_IP_DRIVER *driver_req_ptr);
+static UINT _nx_driver_uninitialize(NX_IP_DRIVER *driver_req_ptr);
+static UINT _nx_driver_enable(NX_IP_DRIVER *driver_req_ptr);
+static UINT _nx_driver_disable(NX_IP_DRIVER *driver_req_ptr);
+static UINT _nx_driver_packet_send(NX_IP_DRIVER *driver_req_ptr);
 
-#define NX_ETHERNET_IP   0x0800
-#define NX_ETHERNET_ARP  0x0806
-#define NX_ETHERNET_RARP 0x8035
-#define NX_ETHERNET_IPV6 0x86DD
-#define NX_ETHERNET_SIZE 14
+/* Define the prototypes for the hardware implementation of this driver */
+static void _nx_driver_transfer_to_netx(NX_IP *ip_ptr, NX_PACKET *packet_ptr);
 
-/* For the simulated ethernet driver, physical addresses are allocated starting
-   at the preset value and then incremented before the next allocation.  */
-
-ULONG   simulated_address_msw =  0x0011;
-ULONG   simulated_address_lsw =  0x22334456;
-
-
-/* Define driver prototypes.  */
-
-VOID    _nx_ram_network_driver(NX_IP_DRIVER *driver_req_ptr);
-void    _nx_ram_network_driver_output(NX_PACKET *packet_ptr, UINT interface_instance_id);
-void    _nx_ram_network_driver_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT interface_instance_id);
-
-#define NX_MAX_RAM_INTERFACES             4
-#define NX_RAM_DRIVER_MAX_MCAST_ADDRESSES 3
-typedef struct MAC_ADDRESS_STRUCT
+/**************************************************************************//**
+ * Network driver entry function
+ *****************************************************************************/
+void nx_driver_esp_hosted(NX_IP_DRIVER *driver_req_ptr)
 {
-    ULONG nx_mac_address_msw;
-    ULONG nx_mac_address_lsw;
-} MAC_ADDRESS;
+    UINT error_code = NX_SUCCESS;
 
+    /* Default to successful return */
+    driver_req_ptr->nx_ip_driver_status = NX_SUCCESS;
 
-/* Define an application-specific data structure that holds internal
-   data (such as the state information) of a device driver.
-
-   The example below applies to the simulated RAM driver.
-   User shall replace its content with information related to
-   the actual driver being used. */
-typedef struct _nx_ram_network_driver_instance_type
-{
-    UINT          nx_ram_network_driver_in_use;
-
-    UINT          nx_ram_network_driver_id;
-
-    NX_INTERFACE *nx_ram_driver_interface_ptr;
-
-    NX_IP        *nx_ram_driver_ip_ptr;
-
-    MAC_ADDRESS   nx_ram_driver_mac_address;
-
-    MAC_ADDRESS   nx_ram_driver_mcast_address[NX_RAM_DRIVER_MAX_MCAST_ADDRESSES];
-} _nx_ram_network_driver_instance_type;
-
-
-/* In this example, there are four instances of the simulated RAM driver.
-   Therefore an array of four driver instances are created to keep track of
-   the interface information of each driver. */
-static _nx_ram_network_driver_instance_type nx_ram_driver[NX_MAX_RAM_INTERFACES];
-
-
-/**************************************************************************/
-/*                                                                        */
-/*  FUNCTION                                               RELEASE        */
-/*                                                                        */
-/*    nx_driver_esp_hosted                                PORTABLE C      */
-/*                                                           6.1          */
-/*  AUTHOR                                                                */
-/*                                                                        */
-/*    Yuxin Zhou, Microsoft Corporation                                   */
-/*                                                                        */
-/*  DESCRIPTION                                                           */
-/*                                                                        */
-/*    This function acts as a virtual network for testing the NetX source */
-/*    and driver concepts.   User application may use this routine as     */
-/*    a template for the actual network driver.  Note that this driver    */
-/*    simulates Ethernet operation.  Some of the parameters don't apply   */
-/*    for non-Ethernet interfaces.                                        */
-/*                                                                        */
-/*  INPUT                                                                 */
-/*                                                                        */
-/*    ip_ptr                                Pointer to IP protocol block  */
-/*                                                                        */
-/*  OUTPUT                                                                */
-/*                                                                        */
-/*    None                                                                */
-/*                                                                        */
-/*  CALLS                                                                 */
-/*                                                                        */
-/*    _nx_ram_network_driver_output         Send physical packet out      */
-/*                                                                        */
-/*  CALLED BY                                                             */
-/*                                                                        */
-/*    NetX IP processing                                                  */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  05-19-2020     Yuxin Zhou               Initial Version 6.0           */
-/*  09-30-2020     Yuxin Zhou               Modified comment(s),          */
-/*                                            resulting in version 6.1    */
-/*                                                                        */
-/**************************************************************************/
-VOID  nx_driver_esp_hosted(NX_IP_DRIVER *driver_req_ptr)
-{
-UINT          i = 0;
-NX_IP        *ip_ptr;
-NX_PACKET    *packet_ptr;
-ULONG        *ethernet_frame_ptr;
-NX_INTERFACE *interface_ptr;
-UINT          interface_index;
-
-    /* Setup the IP pointer from the driver request.  */
-    ip_ptr =  driver_req_ptr -> nx_ip_driver_ptr;
-
-    /* Default to successful return.  */
-    driver_req_ptr -> nx_ip_driver_status =  NX_SUCCESS;
-
-    /* Setup interface pointer.  */
-    interface_ptr = driver_req_ptr -> nx_ip_driver_interface;
-
-    /* Obtain the index number of the network interface. */
-    interface_index = interface_ptr -> nx_interface_index;
-
-    /* Find out the driver interface if the driver command is not ATTACH. */
-    if (driver_req_ptr -> nx_ip_driver_command != NX_LINK_INTERFACE_ATTACH)
+    /* Process according to the driver request type in the IP control block */
+    switch (driver_req_ptr->nx_ip_driver_command)
     {
-        for (i = 0; i < NX_MAX_RAM_INTERFACES; i++)
-        {
-            if (nx_ram_driver[i].nx_ram_network_driver_in_use == 0)
-            {
-                continue;
-            }
-
-            if (nx_ram_driver[i].nx_ram_driver_ip_ptr != ip_ptr)
-            {
-                continue;
-            }
-
-            if (nx_ram_driver[i].nx_ram_driver_interface_ptr == driver_req_ptr -> nx_ip_driver_interface)
-            {
-                break;
-            }
-        }
-
-        if (i == NX_MAX_RAM_INTERFACES)
-        {
-            driver_req_ptr -> nx_ip_driver_status =  NX_INVALID_INTERFACE;
-            return;
-        }
-    }
-
-
-    /* Process according to the driver request type in the IP control
-       block.  */
-    switch (driver_req_ptr -> nx_ip_driver_command)
-    {
-
     case NX_LINK_INTERFACE_ATTACH:
-    {
-
-        /* Find an available driver instance to attach the interface. */
-        for (i = 0; i < NX_MAX_RAM_INTERFACES; i++)
-        {
-            if (nx_ram_driver[i].nx_ram_network_driver_in_use == 0)
-            {
-                break;
-            }
-        }
-        /* An available entry is found. */
-        if (i < NX_MAX_RAM_INTERFACES)
-        {
-            /* Set the IN USE flag.*/
-            nx_ram_driver[i].nx_ram_network_driver_in_use  = 1;
-
-            nx_ram_driver[i].nx_ram_network_driver_id = i;
-
-            /* Record the interface attached to the IP instance. */
-            nx_ram_driver[i].nx_ram_driver_interface_ptr = driver_req_ptr -> nx_ip_driver_interface;
-
-            /* Record the IP instance. */
-            nx_ram_driver[i].nx_ram_driver_ip_ptr = ip_ptr;
-
-            nx_ram_driver[i].nx_ram_driver_mac_address.nx_mac_address_msw = simulated_address_msw;
-            nx_ram_driver[i].nx_ram_driver_mac_address.nx_mac_address_lsw = simulated_address_lsw + i;
-        }
-        else
-        {
-            driver_req_ptr -> nx_ip_driver_status =  NX_INVALID_INTERFACE;
-        }
-
+        /* Process driver link attach. Unsupported feature */
         break;
-    }
 
     case NX_LINK_INTERFACE_DETACH:
-    {
-
-        /* Zero out the driver instance. */
-        memset(&(nx_ram_driver[i]), 0, sizeof(_nx_ram_network_driver_instance_type));
-
+        /* Process driver link detach. Unsupported feature */
         break;
-    }
 
     case NX_LINK_INITIALIZE:
-    {
-
-        /* Device driver shall initialize the Ethernet Controller here. */
-
-#ifdef NX_DEBUG
-        printf("NetX RAM Driver Initialization - %s\n", ip_ptr -> nx_ip_name);
-        printf("  IP Address =%08X\n", ip_ptr -> nx_ip_address);
-#endif
-
-        /* Once the Ethernet controller is initialized, the driver needs to
-           configure the NetX Interface Control block, as outlined below. */
-
-        /* The nx_interface_ip_mtu_size should be the MTU for the IP payload.
-           For regular Ethernet, the IP MTU is 1500. */
-        nx_ip_interface_mtu_set(ip_ptr, interface_index, (NX_LINK_MTU - NX_ETHERNET_SIZE));
-
-        /* Set the physical address (MAC address) of this IP instance.  */
-        /* For this simulated RAM driver, the MAC address is constructed by
-           incrementing a base lsw value, to simulate multiple nodes on the
-           ethernet.  */
-        nx_ip_interface_physical_address_set(ip_ptr, interface_index,
-                                             nx_ram_driver[i].nx_ram_driver_mac_address.nx_mac_address_msw,
-                                             nx_ram_driver[i].nx_ram_driver_mac_address.nx_mac_address_lsw, NX_FALSE);
-
-        /* Indicate to the IP software that IP to physical mapping is required.  */
-        nx_ip_interface_address_mapping_configure(ip_ptr, interface_index, NX_TRUE);
-
+        /* Process driver link initialize */
+        error_code = _nx_driver_initialize(driver_req_ptr);
         break;
-    }
 
     case NX_LINK_UNINITIALIZE:
-    {
-
-        /* Zero out the driver instance. */
-        memset(&(nx_ram_driver[i]), 0, sizeof(_nx_ram_network_driver_instance_type));
-
+        /* Process driver link uninitialize */
+        error_code = _nx_driver_uninitialize(driver_req_ptr);
         break;
-    }
 
     case NX_LINK_ENABLE:
-    {
-
-        /* Process driver link enable.  An Ethernet driver shall enable the
-           transmit and reception logic.  Once the IP stack issues the
-           LINK_ENABLE command, the stack may start transmitting IP packets. */
-
-
-        /* In the RAM driver, just set the enabled flag.  */
-        interface_ptr -> nx_interface_link_up =  NX_TRUE;
-
-#ifdef NX_DEBUG
-        printf("NetX RAM Driver Link Enabled - %s\n", ip_ptr -> nx_ip_name);
-#endif
+        /* Process driver link enable */
+        error_code = _nx_driver_enable(driver_req_ptr);
         break;
-    }
 
     case NX_LINK_DISABLE:
-    {
-
-        /* Process driver link disable.  This command indicates the IP layer
-           is not going to transmit any IP datagrams, nor does it expect any
-           IP datagrams from the interface.  Therefore after processing this command,
-           the device driver shall not send any incoming packets to the IP
-           layer.  Optionally the device driver may turn off the interface. */
-
-        /* In the RAM driver, just clear the enabled flag.  */
-        interface_ptr -> nx_interface_link_up =  NX_FALSE;
-
-#ifdef NX_DEBUG
-        printf("NetX RAM Driver Link Disabled - %s\n", ip_ptr -> nx_ip_name);
-#endif
+        /* Process driver link disable */
+        error_code = _nx_driver_disable(driver_req_ptr);
         break;
-    }
 
     case NX_LINK_PACKET_SEND:
     case NX_LINK_PACKET_BROADCAST:
     case NX_LINK_ARP_SEND:
     case NX_LINK_ARP_RESPONSE_SEND:
     case NX_LINK_RARP_SEND:
-    {
-
-        /*
-           The IP stack sends down a data packet for transmission.
-           The device driver needs to prepend a MAC header, and fill in the
-           Ethernet frame type (assuming Ethernet protocol for network transmission)
-           based on the type of packet being transmitted.
-
-           The following sequence illustrates this process.
-         */
-
-
-        /* Place the ethernet frame at the front of the packet.  */
-        packet_ptr =  driver_req_ptr -> nx_ip_driver_packet;
-
-        /* Adjust the prepend pointer.  */
-        packet_ptr -> nx_packet_prepend_ptr =  packet_ptr -> nx_packet_prepend_ptr - NX_ETHERNET_SIZE;
-
-        /* Adjust the packet length.  */
-        packet_ptr -> nx_packet_length =  packet_ptr -> nx_packet_length + NX_ETHERNET_SIZE;
-
-        /* Setup the ethernet frame pointer to build the ethernet frame.  Backup another 2
-           bytes to get 32-bit word alignment.  */
-        /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary  */
-        ethernet_frame_ptr =  (ULONG *)(packet_ptr -> nx_packet_prepend_ptr - 2);
-
-        /* Build the ethernet frame.  */
-        *ethernet_frame_ptr     =  driver_req_ptr -> nx_ip_driver_physical_address_msw;
-        *(ethernet_frame_ptr + 1) =  driver_req_ptr -> nx_ip_driver_physical_address_lsw;
-        *(ethernet_frame_ptr + 2) =  (interface_ptr -> nx_interface_physical_address_msw << 16) |
-            (interface_ptr -> nx_interface_physical_address_lsw >> 16);
-        *(ethernet_frame_ptr + 3) =  (interface_ptr -> nx_interface_physical_address_lsw << 16);
-
-        if (driver_req_ptr -> nx_ip_driver_command == NX_LINK_ARP_SEND)
-        {
-            *(ethernet_frame_ptr + 3) |= NX_ETHERNET_ARP;
-        }
-        else if (driver_req_ptr -> nx_ip_driver_command == NX_LINK_ARP_RESPONSE_SEND)
-        {
-            *(ethernet_frame_ptr + 3) |= NX_ETHERNET_ARP;
-        }
-        else if (driver_req_ptr -> nx_ip_driver_command == NX_LINK_RARP_SEND)
-        {
-            *(ethernet_frame_ptr + 3) |= NX_ETHERNET_RARP;
-        }
-        else if (packet_ptr -> nx_packet_ip_version == 4)
-        {
-            *(ethernet_frame_ptr + 3) |= NX_ETHERNET_IP;
-        }
-        else
-        {
-            *(ethernet_frame_ptr + 3) |= NX_ETHERNET_IPV6;
-        }
-
-
-        /* Endian swapping if NX_LITTLE_ENDIAN is defined.  */
-        NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr));
-        NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 1));
-        NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 2));
-        NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 3));
-#ifdef NX_DEBUG_PACKET
-        printf("NetX RAM Driver Packet Send - %s\n", ip_ptr -> nx_ip_name);
-#endif
-
-        /* At this point, the packet is a complete Ethernet frame, ready to be transmitted.
-           The driver shall call the actual Ethernet transmit routine and put the packet
-           on the wire.
-
-           In this example, the simulated RAM network transmit routine is called. */
-        _nx_ram_network_driver_output(packet_ptr, i);
+        /* Process packet send requests */
+        error_code = _nx_driver_packet_send(driver_req_ptr);
         break;
-    }
-
 
     case NX_LINK_MULTICAST_JOIN:
-    {
-    UINT mcast_index;
-
-        /* The IP layer issues this command to join a multicast group.  Note that
-           multicast operation is required for IPv6.
-
-           On a typically Ethernet controller, the driver computes a hash value based
-           on MAC address, and programs the hash table.
-
-           It is likely the driver also needs to maintain an internal MAC address table.
-           Later if a multicast address is removed, the driver needs
-           to reprogram the hash table based on the remaining multicast MAC addresses. */
-
-
-        /* The following procedure only applies to our simulated RAM network driver, which manages
-           multicast MAC addresses by a simple look up table. */
-        for (mcast_index = 0; mcast_index < NX_RAM_DRIVER_MAX_MCAST_ADDRESSES; mcast_index++)
-        {
-            if (nx_ram_driver[i].nx_ram_driver_mcast_address[mcast_index].nx_mac_address_msw == 0 &&
-                nx_ram_driver[i].nx_ram_driver_mcast_address[mcast_index].nx_mac_address_lsw == 0)
-            {
-                nx_ram_driver[i].nx_ram_driver_mcast_address[mcast_index].nx_mac_address_msw = driver_req_ptr -> nx_ip_driver_physical_address_msw;
-                nx_ram_driver[i].nx_ram_driver_mcast_address[mcast_index].nx_mac_address_lsw = driver_req_ptr -> nx_ip_driver_physical_address_lsw;
-                break;
-            }
-        }
-        if (mcast_index == NX_RAM_DRIVER_MAX_MCAST_ADDRESSES)
-        {
-            driver_req_ptr -> nx_ip_driver_status =  NX_NO_MORE_ENTRIES;
-        }
-
+        /* Process driver multicast join. Unsupported feature */
         break;
-    }
-
 
     case NX_LINK_MULTICAST_LEAVE:
-    {
-
-    UINT mcast_index;
-
-        /* The IP layer issues this command to remove a multicast MAC address from the
-           receiving list.  A device driver shall properly remove the multicast address
-           from the hash table, so the hardware does not receive such traffic.  Note that
-           in order to reprogram the hash table, the device driver may have to keep track of
-           current active multicast MAC addresses. */
-
-        /* The following procedure only applies to our simulated RAM network driver, which manages
-           multicast MAC addresses by a simple look up table. */
-        for (mcast_index = 0; mcast_index < NX_RAM_DRIVER_MAX_MCAST_ADDRESSES; mcast_index++)
-        {
-            if (nx_ram_driver[i].nx_ram_driver_mcast_address[mcast_index].nx_mac_address_msw == driver_req_ptr -> nx_ip_driver_physical_address_msw &&
-                nx_ram_driver[i].nx_ram_driver_mcast_address[mcast_index].nx_mac_address_lsw == driver_req_ptr -> nx_ip_driver_physical_address_lsw)
-            {
-                nx_ram_driver[i].nx_ram_driver_mcast_address[mcast_index].nx_mac_address_msw = 0;
-                nx_ram_driver[i].nx_ram_driver_mcast_address[mcast_index].nx_mac_address_lsw = 0;
-                break;
-            }
-        }
-        if (mcast_index == NX_RAM_DRIVER_MAX_MCAST_ADDRESSES)
-        {
-            driver_req_ptr -> nx_ip_driver_status =  NX_ENTRY_NOT_FOUND;
-        }
-
+        /* Process driver multicast leave. Unsupported feature */
         break;
-    }
 
     case NX_LINK_GET_STATUS:
-    {
-
-        /* Return the link status in the supplied return pointer.  */
-        *(driver_req_ptr -> nx_ip_driver_return_ptr) =  ip_ptr -> nx_ip_interface[0].nx_interface_link_up;
+        /* Process driver get link status. Unsupported feature */
         break;
-    }
 
     case NX_LINK_GET_SPEED:
-    {
-
-        /* Return the link's line speed in the supplied return pointer. Unsupported feature.  */
-        *(driver_req_ptr -> nx_ip_driver_return_ptr) = 0;
+        /* Return the link's line speed in the supplied return pointer. Unsupported feature */
+        *(driver_req_ptr->nx_ip_driver_return_ptr) = 0;
         break;
-    }
 
     case NX_LINK_GET_DUPLEX_TYPE:
-    {
-
-        /* Return the link's line speed in the supplied return pointer. Unsupported feature.  */
-        *(driver_req_ptr -> nx_ip_driver_return_ptr) = 0;
+        /* Return the link's line speed in the supplied return pointer. Unsupported feature */
+        *(driver_req_ptr->nx_ip_driver_return_ptr) = 0;
         break;
-    }
 
     case NX_LINK_GET_ERROR_COUNT:
-    {
-
-        /* Return the link's line speed in the supplied return pointer. Unsupported feature.  */
-        *(driver_req_ptr -> nx_ip_driver_return_ptr) = 0;
+        /* Return the link's line speed in the supplied return pointer. Unsupported feature */
+        *(driver_req_ptr->nx_ip_driver_return_ptr) = 0;
         break;
-    }
 
     case NX_LINK_GET_RX_COUNT:
-    {
-
-        /* Return the link's line speed in the supplied return pointer. Unsupported feature.  */
-        *(driver_req_ptr -> nx_ip_driver_return_ptr) = 0;
+        /* Return the link's line speed in the supplied return pointer. Unsupported feature */
+        *(driver_req_ptr->nx_ip_driver_return_ptr) = 0;
         break;
-    }
 
     case NX_LINK_GET_TX_COUNT:
-    {
-
-        /* Return the link's line speed in the supplied return pointer. Unsupported feature.  */
-        *(driver_req_ptr -> nx_ip_driver_return_ptr) = 0;
+        /* Return the link's line speed in the supplied return pointer. Unsupported feature */
+        *(driver_req_ptr->nx_ip_driver_return_ptr) = 0;
         break;
-    }
 
     case NX_LINK_GET_ALLOC_ERRORS:
-    {
-
-        /* Return the link's line speed in the supplied return pointer. Unsupported feature.  */
-        *(driver_req_ptr -> nx_ip_driver_return_ptr) = 0;
+        /* Return the link's line speed in the supplied return pointer. Unsupported feature */
+        *(driver_req_ptr->nx_ip_driver_return_ptr) = 0;
         break;
-    }
 
     case NX_LINK_DEFERRED_PROCESSING:
-    {
-
-        /* Driver defined deferred processing. This is typically used to defer interrupt
-           processing to the thread level.
-
-           A typical use case of this command is:
-           On receiving an Ethernet frame, the RX ISR does not process the received frame,
-           but instead records such an event in its internal data structure, and issues
-           a notification to the IP stack (the driver sends the notification to the IP
-           helping thread by calling "_nx_ip_driver_deferred_processing()".  When the IP stack
-           gets a notification of a pending driver deferred process, it calls the
-           driver with the NX_LINK_DEFERRED_PROCESSING command.  The driver shall complete
-           the pending receive process.
-         */
-
-        /* The simulated RAM driver doesn't require a deferred process so it breaks out of
-           the switch case. */
-
-
+        /* Process driver link deferred processing. Unsupported feature */
         break;
-    }
 
     case NX_LINK_SET_PHYSICAL_ADDRESS:
-    {
-
-        /* Find an driver instance to attach the interface. */
-        for (i = 0; i < NX_MAX_RAM_INTERFACES; i++)
-        {
-            if (nx_ram_driver[i].nx_ram_driver_interface_ptr == driver_req_ptr -> nx_ip_driver_interface)
-            {
-                break;
-            }
-        }
-
-        /* An available entry is found. */
-        if (i < NX_MAX_RAM_INTERFACES)
-        {
-
-            /* Set the physical address.  */
-            nx_ram_driver[i].nx_ram_driver_mac_address.nx_mac_address_msw = driver_req_ptr -> nx_ip_driver_physical_address_msw;
-            nx_ram_driver[i].nx_ram_driver_mac_address.nx_mac_address_lsw = driver_req_ptr -> nx_ip_driver_physical_address_lsw;
-        }
-        else
-        {
-            driver_req_ptr -> nx_ip_driver_status =  NX_INVALID_INTERFACE;
-        }
-
+        /* Process driver link set physical address. Unsupported feature */
         break;
-    }
-
-#ifdef NX_ENABLE_INTERFACE_CAPABILITY
-    case NX_INTERFACE_CAPABILITY_GET:
-    {
-
-        /* Return the capability of the Ethernet controller speed in the supplied return pointer. Unsupported feature.  */
-        *(driver_req_ptr -> nx_ip_driver_return_ptr) = 0;
-        break;
-    }
-
-    case NX_INTERFACE_CAPABILITY_SET:
-    {
-
-        /* Set the capability of the Ethernet controller. Unsupported feature.  */
-        break;
-    }
-#endif /* NX_ENABLE_INTERFACE_CAPABILITY  */
 
     default:
-
-        /* Invalid driver request.  */
-
-        /* Return the unhandled command status.  */
-        driver_req_ptr -> nx_ip_driver_status =  NX_UNHANDLED_COMMAND;
-
-#ifdef NX_DEBUG
-        printf("NetX RAM Driver Received invalid request - %s\n", ip_ptr -> nx_ip_name);
-#endif
+        /* Return the unhandled command status */
+        driver_req_ptr->nx_ip_driver_status = NX_UNHANDLED_COMMAND;
         break;
     }
+
+    if (error_code != NX_SUCCESS) {
+        driver_req_ptr->nx_ip_driver_status = NX_NOT_SUCCESSFUL;
+    }
 }
 
-
-/**************************************************************************/
-/*                                                                        */
-/*  FUNCTION                                               RELEASE        */
-/*                                                                        */
-/*    _nx_ram_network_driver_output                       PORTABLE C      */
-/*                                                           6.1          */
-/*  AUTHOR                                                                */
-/*                                                                        */
-/*    Yuxin Zhou, Microsoft Corporation                                   */
-/*                                                                        */
-/*  DESCRIPTION                                                           */
-/*                                                                        */
-/*    This function simply sends the packet to the IP instance on the     */
-/*    created IP list that matches the physical destination specified in  */
-/*    the Ethernet packet.  In a real hardware setting, this routine      */
-/*    would simply put the packet out on the wire.                        */
-/*                                                                        */
-/*  INPUT                                                                 */
-/*                                                                        */
-/*    packet_ptr                            Packet pointer                */
-/*    interface_instance_id                 ID of driver instance         */
-/*                                                                        */
-/*  OUTPUT                                                                */
-/*                                                                        */
-/*    None                                                                */
-/*                                                                        */
-/*  CALLS                                                                 */
-/*                                                                        */
-/*    nx_packet_copy                        Copy a packet                 */
-/*    nx_packet_transmit_release            Release a packet              */
-/*    _nx_ram_network_driver_receive        RAM driver receive processing */
-/*                                                                        */
-/*  CALLED BY                                                             */
-/*                                                                        */
-/*    NetX IP processing                                                  */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  05-19-2020     Yuxin Zhou               Initial Version 6.0           */
-/*  09-30-2020     Yuxin Zhou               Modified comment(s),          */
-/*                                            resulting in version 6.1    */
-/*                                                                        */
-/**************************************************************************/
-void  _nx_ram_network_driver_output(NX_PACKET *packet_ptr, UINT interface_instance_id)
+/**************************************************************************//**
+ * Receive incoming packet from ESP32
+ *****************************************************************************/
+void _nx_driver_receive_callback(struct pbuf *rx_buffer)
 {
+    NX_PACKET *packet_ptr;
+    UCHAR     *packet_buffer;
+    UINT      status;
 
-NX_IP     *next_ip;
-NX_PACKET *packet_copy;
-ULONG      destination_address_msw;
-ULONG      destination_address_lsw;
-UINT       old_threshold = 0;
-UINT       i;
-UINT       mcast_index;
-
-#ifdef NX_DEBUG_PACKET
-UCHAR *ptr;
-UINT   j;
-
-    ptr =  packet_ptr -> nx_packet_prepend_ptr;
-    printf("Ethernet Packet: ");
-    for (j = 0; j < 6; j++)
-    {
-        printf("%02X", *ptr++);
+    /* Allocate a NX_PACKET to be passed to the IP stack */
+    status = nx_packet_allocate(_pool_ptr, &packet_ptr, NX_IP_PACKET, TX_WAIT_FOREVER);
+    if (status != NX_SUCCESS) {
+        printf("_nx_driver_receive_callback: unable to allocate memory for receive packet\n");
+        return;
     }
-    printf(" ");
-    for (j = 0; j < 6; j++)
-    {
-        printf("%02X", *ptr++);
+
+    packet_buffer = rx_buffer->payload;
+    /* Setup the ethernet frame pointer to build the ethernet frame. Backup another 2
+        bytes to get 32-bit word alignment. */
+    packet_buffer = packet_buffer - 2;
+    status = nx_packet_data_append(packet_ptr, packet_buffer,rx_buffer->len + 2, _pool_ptr, TX_WAIT_FOREVER);
+    if (status != NX_SUCCESS) {
+        printf("_nx_driver_receive_callback: packet append error\n");
+        return;
     }
-    printf(" %02X", *ptr++);
-    printf("%02X ", *ptr++);
 
-    i = 0;
-    for (j = 0; j < (packet_ptr -> nx_packet_length - NX_ETHERNET_SIZE); j++)
-    {
-        printf("%02X", *ptr++);
-        i++;
-        if (i > 3)
-        {
-            i = 0;
-            printf(" ");
-        }
-    }
-    printf("\n");
+    /* Clean off the offset */
+    packet_ptr->nx_packet_prepend_ptr = packet_ptr->nx_packet_prepend_ptr + 2;
 
+    /* Adjust the packet length */
+    packet_ptr->nx_packet_length = packet_ptr->nx_packet_length - 2;
 
-#endif
+    _nx_driver_transfer_to_netx(_ip_ptr, packet_ptr);
+}
 
-    /* Pickup the destination IP address from the packet_ptr.  */
-    destination_address_msw =  (ULONG)*(packet_ptr -> nx_packet_prepend_ptr);
-    destination_address_msw =  (destination_address_msw << 8) | (ULONG)*(packet_ptr -> nx_packet_prepend_ptr + 1);
-    destination_address_lsw =  (ULONG)*(packet_ptr -> nx_packet_prepend_ptr + 2);
-    destination_address_lsw =  (destination_address_lsw << 8) | (ULONG)*(packet_ptr -> nx_packet_prepend_ptr + 3);
-    destination_address_lsw =  (destination_address_lsw << 8) | (ULONG)*(packet_ptr -> nx_packet_prepend_ptr + 4);
-    destination_address_lsw =  (destination_address_lsw << 8) | (ULONG)*(packet_ptr -> nx_packet_prepend_ptr + 5);
+/**************************************************************************//**
+ * Handle the spi driver event
+ *****************************************************************************/
+static void _reset_slave(void)
+{
+	GPIO_InitTypeDef GPIO_InitStruct;
 
+	/* GPIO Ports Clock Enable */
+	__HAL_RCC_GPIOB_CLK_ENABLE();
 
-    /* Disable preemption.  */
-    tx_thread_preemption_change(tx_thread_identify(), 0, &old_threshold);
+	/* TODO: make this pin configurable from project config */
+	GPIO_InitStruct.Pin = GPIO_RESET_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(GPIO_RESET_GPIO_Port, &GPIO_InitStruct);
 
-    for (i = 0; i < NX_MAX_RAM_INTERFACES; i++)
-    {
+	HAL_GPIO_WritePin(GPIO_RESET_GPIO_Port, GPIO_RESET_Pin, GPIO_PIN_RESET);
+	hard_delay(50);
 
-        /* Skip the interface from which the packet was sent. */
-        if (i == interface_instance_id)
-        {
-            continue;
-        }
+	/* revert to initial state */
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	HAL_GPIO_Init(GPIO_RESET_GPIO_Port, &GPIO_InitStruct);
 
-        /* Skip the instance that has not been initialized. */
-        if (nx_ram_driver[i].nx_ram_network_driver_in_use == 0)
-        {
-            continue;
-        }
+	/* stop spi transactions short time to avoid slave sync issues */
+	hard_delay(50000);
+}
 
-        /* Set the next IP instance.  */
-        next_ip = nx_ram_driver[i].nx_ram_driver_ip_ptr;
+/**************************************************************************//**
+ * Handle the spi driver event
+ *****************************************************************************/
+static void _spi_driver_event_handler(uint8_t event)
+{
+	switch(event)
+	{
+		case SPI_DRIVER_ACTIVE:
+		{
+            (VOID)tx_semaphore_put(&_device_ready_semphr);
+			break;
+		}
+		default:
+		break;
+	}
+}
 
-        /* If the destination MAC address is broadcast or the destination matches the interface MAC,
-           accept the packet. */
-        if (((destination_address_msw == ((ULONG)0x0000FFFF)) && (destination_address_lsw == ((ULONG)0xFFFFFFFF))) ||   /* Broadcast match */
-            ((destination_address_msw == nx_ram_driver[i].nx_ram_driver_mac_address.nx_mac_address_msw) &&
-             (destination_address_lsw == nx_ram_driver[i].nx_ram_driver_mac_address.nx_mac_address_lsw)) ||
-            (destination_address_msw == ((ULONG)0x00003333)) ||
-            ((destination_address_msw == 0) && (destination_address_lsw == 0)))
-        {
+/**************************************************************************//**
+ * Handle the sta rx event
+ *****************************************************************************/
+static void _sta_rx_callback(struct network_handle *net_handle)
+{
+	struct pbuf *rx_buffer = NULL;
+	
+	rx_buffer = network_read(net_handle, 0);
+	if (rx_buffer) {
 
-            /* Make a copy of packet for the forwarding.  */
-            if (nx_packet_copy(packet_ptr, &packet_copy, next_ip -> nx_ip_default_packet_pool, NX_NO_WAIT))
-            {
+        _nx_driver_receive_callback(rx_buffer);
 
-                /* Remove the Ethernet header.  */
-                packet_ptr -> nx_packet_prepend_ptr =  packet_ptr -> nx_packet_prepend_ptr + NX_ETHERNET_SIZE;
+		free(rx_buffer->payload);
+		rx_buffer->payload = NULL;
+		free(rx_buffer);
+		rx_buffer = NULL;
+	}
+}
 
-                /* Adjust the packet length.  */
-                packet_ptr -> nx_packet_length =  packet_ptr -> nx_packet_length - NX_ETHERNET_SIZE;
+/**************************************************************************//**
+ * Handle the driver initialize request
+ *****************************************************************************/
+static UINT _nx_driver_initialize(NX_IP_DRIVER *driver_req_ptr)
+{
+    UINT    interface_index;
+    ULONG   mac_addr_lsw, mac_addr_msw;
+    UINT    error_code = NX_SUCCESS;
+	char    mac[MAC_STR_LEN];
 
-                /* Error, no point in continuing, just release the packet.  */
-                nx_packet_transmit_release(packet_ptr);
-                return;
+    /* Setup the IP pointer from the driver request */
+    _ip_ptr = driver_req_ptr->nx_ip_driver_ptr;
+
+    /* Obtain the index number of the network interface */
+    interface_index = driver_req_ptr->nx_ip_driver_interface->nx_interface_index;
+
+    /* Setup the default packet pool for the driver's received packets */
+    _pool_ptr = _ip_ptr->nx_ip_default_packet_pool;
+
+    tx_semaphore_create(&_device_ready_semphr, "_device_ready_semphr", 0);
+
+    _reset_slave();
+    network_init();
+    stm_spi_init(_spi_driver_event_handler);
+
+    tx_semaphore_get(&_device_ready_semphr, TX_WAIT_FOREVER);
+
+    control_path_platform_init();
+	memset(mac, 0, MAC_STR_LEN);
+	wifi_get_mac(WIFI_MODE_STA, mac);
+
+    /* Once the Ethernet controller is initialized, the driver needs to
+        configure the NetX Interface Control block, as outlined below */
+
+    /* The nx_interface_ip_mtu_size should be the MTU for the IP payload.
+        For regular Ethernet, the IP MTU is 1500 */
+    nx_ip_interface_mtu_set(_ip_ptr, interface_index, (NX_LINK_MTU - NX_ETHERNET_SIZE));
+
+    /* Set the physical address (MAC address) of this IP instance */
+    mac_addr_msw = (ULONG)((mac[0] << 8)
+                            + mac[1]);
+    mac_addr_lsw = (ULONG)((mac[2] << 24)
+                            + (mac[3] << 16)
+                            + (mac[4] << 8)
+                            + (mac[5]));
+
+    nx_ip_interface_physical_address_set(_ip_ptr, interface_index,
+                                        mac_addr_msw, mac_addr_lsw, NX_FALSE);
+
+    /* Indicate to the IP software that IP to physical mapping is required */
+    nx_ip_interface_address_mapping_configure(_ip_ptr, interface_index, NX_TRUE);
+    return error_code;
+}
+
+/**************************************************************************//**
+ * Handle the link enable request
+ *****************************************************************************/
+static UINT _nx_driver_enable(NX_IP_DRIVER *driver_req_ptr)
+{
+    UINT error_code = NX_DRIVER_ERROR;
+    UINT retry_count = 0;
+    esp_hosted_control_config_t ap_config;
+
+    /* Get the wifi connection info from application */
+    nx_wifi_info_t *wifi_info_ptr = (nx_wifi_info_t *)driver_req_ptr->nx_ip_driver_interface->nx_interface_additional_link_info;
+
+	strncpy((char* )&ap_config.station.ssid, wifi_info_ptr->ssid, SSID_LENGTH);
+	strncpy((char* )&ap_config.station.pwd, wifi_info_ptr->password,PASSWORD_LENGTH);
+    ap_config.station.encryption_mode = wifi_info_ptr->mode;
+	ap_config.station.is_wpa3_supported = 0;
+
+    do {
+        
+        retry_count++;
+
+        printf("%d try to connect to SSID: %s\n", retry_count, wifi_info_ptr->ssid);
+
+        if (wifi_set_ap_config(ap_config) == SUCCESS) {
+            printf("Connection established\r\n");
+
+            sta_handle = network_open(STA_INTERFACE, _sta_rx_callback);
+            if (sta_handle != NULL) {
+                error_code = SUCCESS;
             }
-
-            /*lint -e{644} suppress variable might not be initialized, since "packet_copy" was initialized in nx_packet_copy. */
-            _nx_ram_network_driver_receive(next_ip, packet_copy, i);
-        }
-        else
-        {
-            for (mcast_index = 0; mcast_index < NX_RAM_DRIVER_MAX_MCAST_ADDRESSES; mcast_index++)
-            {
-
-                if (destination_address_msw == nx_ram_driver[i].nx_ram_driver_mcast_address[mcast_index].nx_mac_address_msw &&
-                    destination_address_lsw == nx_ram_driver[i].nx_ram_driver_mcast_address[mcast_index].nx_mac_address_lsw)
-                {
-
-                    /* Make a copy of packet for the forwarding.  */
-                    if (nx_packet_copy(packet_ptr, &packet_copy, next_ip -> nx_ip_default_packet_pool, NX_NO_WAIT))
-                    {
-
-                        /* Remove the Ethernet header.  */
-                        packet_ptr -> nx_packet_prepend_ptr =  packet_ptr -> nx_packet_prepend_ptr + NX_ETHERNET_SIZE;
-
-                        /* Adjust the packet length.  */
-                        packet_ptr -> nx_packet_length =  packet_ptr -> nx_packet_length - NX_ETHERNET_SIZE;
-
-                        /* Error, no point in continuing, just release the packet.  */
-                        nx_packet_transmit_release(packet_ptr);
-                        return;
-                    }
-
-                    _nx_ram_network_driver_receive(next_ip, packet_copy, i);
-                }
+            
+            break;
+        } else {
+            if (retry_count > NX_DRIVER_JOIN_MAX_CNT) {
+                break;
+            } else {
+                tx_thread_sleep(100);
             }
         }
+    } while (1);
+
+    if (error_code == NX_SUCCESS) {
+        driver_req_ptr->nx_ip_driver_interface->nx_interface_link_up = NX_TRUE;
     }
 
-    /* Remove the Ethernet header.  In real hardware environments, this is typically
-       done after a transmit complete interrupt.  */
-    packet_ptr -> nx_packet_prepend_ptr =  packet_ptr -> nx_packet_prepend_ptr + NX_ETHERNET_SIZE;
+    return error_code;
+}
 
-    /* Adjust the packet length.  */
-    packet_ptr -> nx_packet_length =  packet_ptr -> nx_packet_length - NX_ETHERNET_SIZE;
+/**************************************************************************//**
+ * Handle the driver packet send request
+ *****************************************************************************/
+static UINT _nx_driver_packet_send(NX_IP_DRIVER *driver_req_ptr)
+{
+    NX_PACKET    *packet_ptr;
+    ULONG        *ethernet_frame_ptr;
+    NX_INTERFACE *interface_ptr;
 
-    /* Now that the Ethernet frame has been removed, release the packet.  */
+    /* Setup interface pointer */
+    interface_ptr = driver_req_ptr->nx_ip_driver_interface;
+
+    /* Place the ethernet frame at the front of the packet */
+    packet_ptr = driver_req_ptr->nx_ip_driver_packet;
+
+    /* Adjust the prepend pointer */
+    packet_ptr->nx_packet_prepend_ptr = packet_ptr->nx_packet_prepend_ptr - NX_ETHERNET_SIZE;
+
+    /* Adjust the packet length */
+    packet_ptr->nx_packet_length = packet_ptr->nx_packet_length + NX_ETHERNET_SIZE;
+
+    /* Setup the ethernet frame pointer to build the ethernet frame. Backup another 2
+        bytes to get 32-bit word alignment. */
+    /*lint -e{927} -e{826} suppress cast of pointer to pointer, since it is necessary */
+    ethernet_frame_ptr = (ULONG *)(packet_ptr->nx_packet_prepend_ptr - 2);
+
+    /* Build the ethernet frame */
+    *ethernet_frame_ptr       = driver_req_ptr->nx_ip_driver_physical_address_msw;
+    *(ethernet_frame_ptr + 1) = driver_req_ptr->nx_ip_driver_physical_address_lsw;
+    *(ethernet_frame_ptr + 2) = (interface_ptr->nx_interface_physical_address_msw << 16)
+                                | (interface_ptr->nx_interface_physical_address_lsw >> 16);
+    *(ethernet_frame_ptr + 3) = (interface_ptr->nx_interface_physical_address_lsw << 16);
+
+    if (driver_req_ptr->nx_ip_driver_command == NX_LINK_ARP_SEND) {
+        *(ethernet_frame_ptr + 3) |= NX_ETHERNET_ARP;
+    } else if (driver_req_ptr->nx_ip_driver_command == NX_LINK_ARP_RESPONSE_SEND) {
+        *(ethernet_frame_ptr + 3) |= NX_ETHERNET_ARP;
+    } else if (driver_req_ptr->nx_ip_driver_command == NX_LINK_RARP_SEND) {
+        *(ethernet_frame_ptr + 3) |= NX_ETHERNET_RARP;
+    } else if (packet_ptr->nx_packet_ip_version == 4) {
+        *(ethernet_frame_ptr + 3) |= NX_ETHERNET_IP;
+    } else {
+        *(ethernet_frame_ptr + 3) |= NX_ETHERNET_IPV6;
+    }
+
+    /* Endian swapping if NX_LITTLE_ENDIAN is defined */
+    NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr));
+    NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 1));
+    NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 2));
+    NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 3));
+
+    for (NX_PACKET *p = packet_ptr; p != NULL; p = p->nx_packet_next) {
+
+        struct pbuf *buffer = malloc(sizeof(struct pbuf));
+		if (buffer != NULL) {
+			buffer->len = p->nx_packet_length;
+			buffer->payload = malloc(buffer->len);
+			if (buffer->payload != NULL) {
+				memcpy(buffer->payload, p->nx_packet_prepend_ptr, buffer->len);    
+				network_write(sta_handle, buffer);
+			}
+		}
+    }
+
+    NX_DRIVER_ETHERNET_HEADER_REMOVE(packet_ptr);
     nx_packet_transmit_release(packet_ptr);
 
-    /* Restore preemption.  */
-    /*lint -e{644} suppress variable might not be initialized, since "old_threshold" was initialized in previous tx_thread_preemption_change. */
-    tx_thread_preemption_change(tx_thread_identify(), old_threshold, &old_threshold);
+    return NX_SUCCESS;
 }
 
 
-/**************************************************************************/
-/*                                                                        */
-/*  FUNCTION                                               RELEASE        */
-/*                                                                        */
-/*    _nx_ram_network_driver_receive                      PORTABLE C      */
-/*                                                           6.1          */
-/*  AUTHOR                                                                */
-/*                                                                        */
-/*    Yuxin Zhou, Microsoft Corporation                                   */
-/*                                                                        */
-/*  DESCRIPTION                                                           */
-/*                                                                        */
-/*    This function processing incoming packets.  In the RAM network      */
-/*    driver, the incoming packets are coming from the RAM driver output  */
-/*    routine.  In real hardware settings, this routine would be called   */
-/*    from the receive packet ISR.                                        */
-/*                                                                        */
-/*  INPUT                                                                 */
-/*                                                                        */
-/*    ip_ptr                                Pointer to IP protocol block  */
-/*    packet_ptr                            Packet pointer                */
-/*    interface_instance_id                 The interface ID the packet is*/
-/*                                            destined for                */
-/*                                                                        */
-/*  OUTPUT                                                                */
-/*                                                                        */
-/*    None                                                                */
-/*                                                                        */
-/*  CALLS                                                                 */
-/*                                                                        */
-/*    _nx_ip_packet_receive                 IP receive packet processing  */
-/*    _nx_ip_packet_deferred_receive        IP deferred receive packet    */
-/*                                            processing                  */
-/*    _nx_arp_packet_deferred_receive       ARP receive processing        */
-/*    _nx_rarp_packet_deferred_receive      RARP receive processing       */
-/*    nx_packet_release                     Packet release                */
-/*                                                                        */
-/*  CALLED BY                                                             */
-/*                                                                        */
-/*    NetX IP processing                                                  */
-/*                                                                        */
-/*  RELEASE HISTORY                                                       */
-/*                                                                        */
-/*    DATE              NAME                      DESCRIPTION             */
-/*                                                                        */
-/*  05-19-2020     Yuxin Zhou               Initial Version 6.0           */
-/*  09-30-2020     Yuxin Zhou               Modified comment(s),          */
-/*                                            resulting in version 6.1    */
-/*                                                                        */
-/**************************************************************************/
-void  _nx_ram_network_driver_receive(NX_IP *ip_ptr, NX_PACKET *packet_ptr, UINT interface_instance_id)
+/**************************************************************************//**
+ * Handle the driver uninitialize request
+ *****************************************************************************/
+static UINT _nx_driver_uninitialize(NX_IP_DRIVER *driver_req_ptr)
 {
+    return NX_SUCCESS;
+}
 
-UINT packet_type;
+/**************************************************************************//**
+ * Handle the driver disable request
+ *****************************************************************************/
+static UINT _nx_driver_disable(NX_IP_DRIVER *driver_req_ptr)
+{
+    driver_req_ptr->nx_ip_driver_interface->nx_interface_link_up = NX_FALSE;
+    return NX_SUCCESS;
+}
 
-    /* Pickup the packet header to determine where the packet needs to be
-       sent.  */
-    packet_type =  (((UINT)(*(packet_ptr -> nx_packet_prepend_ptr + 12))) << 8) |
-        ((UINT)(*(packet_ptr -> nx_packet_prepend_ptr + 13)));
+/**************************************************************************//**
+ * Transfer packet received from ESP32 to IP stack
+ *****************************************************************************/
+static void _nx_driver_transfer_to_netx(NX_IP *ip_ptr, NX_PACKET *packet_ptr)
+{
+    UINT packet_type;
 
+    /* Pickup the packet header to determine where the packet needs to be sent */
+    packet_type = (((UINT)(*(packet_ptr->nx_packet_prepend_ptr + 12))) << 8)
+                    | ((UINT)(*(packet_ptr->nx_packet_prepend_ptr + 13)));
+    /* Setup interface pointer */
+    packet_ptr->nx_packet_address.nx_packet_interface_ptr = &ip_ptr->nx_ip_interface[0];
 
-    /* Setup interface pointer.  */
-    packet_ptr -> nx_packet_address.nx_packet_interface_ptr = nx_ram_driver[interface_instance_id].nx_ram_driver_interface_ptr;
+    /* Route the incoming packet according to its ethernet type */
+    if ((packet_type == NX_ETHERNET_IP) || (packet_type == NX_ETHERNET_IPV6)) {
 
+        /* Note: The length reported by some Ethernet hardware includes bytes after the packet
+            as well as the Ethernet header. In some cases, the actual packet length after the
+            Ethernet header should be derived from the length in the IP header (lower 16 bits of
+            the first 32-bit word). */
 
-    /* Route the incoming packet according to its ethernet type.  */
-    /* The RAM driver accepts both IPv4 and IPv6 frames. */
-    if ((packet_type == NX_ETHERNET_IP) || (packet_type == NX_ETHERNET_IPV6))
-    {
+        /* Clean off the Ethernet header */
+        packet_ptr->nx_packet_prepend_ptr = packet_ptr->nx_packet_prepend_ptr + NX_ETHERNET_SIZE;
 
-        /* Note:  The length reported by some Ethernet hardware includes bytes after the packet
-           as well as the Ethernet header.  In some cases, the actual packet length after the
-           Ethernet header should be derived from the length in the IP header (lower 16 bits of
-           the first 32-bit word).  */
+        /* Adjust the packet length */
+        packet_ptr->nx_packet_length = packet_ptr->nx_packet_length - NX_ETHERNET_SIZE;
 
-        /* Clean off the Ethernet header.  */
-        packet_ptr -> nx_packet_prepend_ptr =  packet_ptr -> nx_packet_prepend_ptr + NX_ETHERNET_SIZE;
-
-        /* Adjust the packet length.  */
-        packet_ptr -> nx_packet_length =  packet_ptr -> nx_packet_length - NX_ETHERNET_SIZE;
-
-        /* Route to the ip receive function.  */
-#ifdef NX_DEBUG_PACKET
-        printf("NetX RAM Driver IP Packet Receive - %s\n", ip_ptr -> nx_ip_name);
-#endif
-
-#ifdef NX_DIRECT_ISR_CALL
+        /* Route to the ip receive function */
         _nx_ip_packet_receive(ip_ptr, packet_ptr);
-#else
-        _nx_ip_packet_deferred_receive(ip_ptr, packet_ptr);
-#endif
     }
 #ifndef NX_DISABLE_IPV4
-    else if (packet_type == NX_ETHERNET_ARP)
-    {
+    else if (packet_type == NX_ETHERNET_ARP) {
+            /* Clean off the Ethernet header */
+            packet_ptr->nx_packet_prepend_ptr = packet_ptr->nx_packet_prepend_ptr + NX_ETHERNET_SIZE;
 
-        /* Clean off the Ethernet header.  */
-        packet_ptr -> nx_packet_prepend_ptr =  packet_ptr -> nx_packet_prepend_ptr + NX_ETHERNET_SIZE;
+            /* Adjust the packet length */
+            packet_ptr->nx_packet_length = packet_ptr->nx_packet_length - NX_ETHERNET_SIZE;
 
-        /* Adjust the packet length.  */
-        packet_ptr -> nx_packet_length =  packet_ptr -> nx_packet_length - NX_ETHERNET_SIZE;
+            /* Route to the ARP receive function */
+            _nx_arp_packet_receive(ip_ptr, packet_ptr);
+        } else if (packet_type == NX_ETHERNET_RARP) {
+            /* Clean off the Ethernet header */
+            packet_ptr->nx_packet_prepend_ptr = packet_ptr->nx_packet_prepend_ptr + NX_ETHERNET_SIZE;
 
-        /* Route to the ARP receive function.  */
-#ifdef NX_DEBUG
-        printf("NetX RAM Driver ARP Receive - %s\n", ip_ptr -> nx_ip_name);
-#endif
-        _nx_arp_packet_deferred_receive(ip_ptr, packet_ptr);
+            /* Adjust the packet length */
+            packet_ptr->nx_packet_length = packet_ptr->nx_packet_length - NX_ETHERNET_SIZE;
+            /* Route to the RARP receive function */
+            _nx_rarp_packet_receive(ip_ptr, packet_ptr);
     }
-    else if (packet_type == NX_ETHERNET_RARP)
-    {
-
-        /* Clean off the Ethernet header.  */
-        packet_ptr -> nx_packet_prepend_ptr =  packet_ptr -> nx_packet_prepend_ptr + NX_ETHERNET_SIZE;
-
-        /* Adjust the packet length.  */
-        packet_ptr -> nx_packet_length =  packet_ptr -> nx_packet_length - NX_ETHERNET_SIZE;
-
-        /* Route to the RARP receive function.  */
-#ifdef NX_DEBUG
-        printf("NetX RAM Driver RARP Receive - %s\n", ip_ptr -> nx_ip_name);
-#endif
-        _nx_rarp_packet_deferred_receive(ip_ptr, packet_ptr);
-    }
-#endif /* !NX_DISABLE_IPV4  */
-    else
-    {
-
-        /* Invalid ethernet header... release the packet.  */
+#endif /* !NX_DISABLE_IPV4 */
+    else {
+        /* Invalid ethernet header... release the packet */
         nx_packet_release(packet_ptr);
     }
 }
-

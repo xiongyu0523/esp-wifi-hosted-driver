@@ -15,13 +15,13 @@
 /**                                                                       */
 /** NetX Component                                                        */
 /**                                                                       */
-/**   Ethernet driver for STM32L4 family of microprocessors               */
+/**   Ethernet driver for esp-hosted driver                               */
 /**                                                                       */
 /**************************************************************************/
 /**************************************************************************/
 
-#ifndef NX_DRIVER_STM32L4_H
-#define NX_DRIVER_STM32L4_H
+#ifndef NX_DRIVER_ESP_HOSTED_H
+#define NX_DRIVER_ESP_HOSTED_H
 
 
 #ifdef   __cplusplus
@@ -30,9 +30,8 @@
 extern   "C" {
 #endif
 
-#include "wifi.h"
 #include "nx_api.h"
-
+#include "commands.h"
 
 #define NX_DRIVER_STATE_NOT_INITIALIZED         1
 #define NX_DRIVER_STATE_INITIALIZE_FAILED       2
@@ -40,10 +39,16 @@ extern   "C" {
 #define NX_DRIVER_STATE_LINK_ENABLED            4
 
 #define NX_DRIVER_ERROR                         90
+
+typedef struct {
+    CHAR ssid[SSID_LENGTH];
+    CHAR password[PASSWORD_LENGTH];
+    wifi_auth_mode_t mode;
+} nx_wifi_info_t;
     
 /* Define global driver entry function. */
 
-VOID  nx_driver_stm32l4(NX_IP_DRIVER *driver_req_ptr);
+VOID  nx_driver_esp_hosted(NX_IP_DRIVER *driver_req_ptr);
 
 #ifdef   __cplusplus
 /* Yes, C++ compiler is present.  Use standard C.  */

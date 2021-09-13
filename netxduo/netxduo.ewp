@@ -2408,6 +2408,15 @@
             </file>
         </group>
         <group>
+            <name>dhcp</name>
+            <file>
+                <name>$PROJ_DIR$\addons\dhcp\nxd_dhcp_client.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\addons\dhcp\nxd_dhcp_client.h</name>
+            </file>
+        </group>
+        <group>
             <name>dns</name>
             <file>
                 <name>$PROJ_DIR$\addons\dns\nxd_dns.c</name>

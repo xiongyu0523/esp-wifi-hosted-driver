@@ -359,6 +359,7 @@
                     <state>$PROJ_DIR$\..\netxduo\addons\dns</state>
                     <state>$PROJ_DIR$\..\netxduo\addons\mqtt</state>
                     <state>$PROJ_DIR$\..\netxduo\addons\sntp</state>
+                    <state>$PROJ_DIR$\..\netxduo\addons\dhcp</state>
                     <state>$PROJ_DIR$\..\netxduo\nx_secure\inc</state>
                     <state>$PROJ_DIR$\..\netxduo\nx_secure\ports</state>
                     <state>$PROJ_DIR$\..\stm32l4xx_lib\</state>
@@ -2262,12 +2263,6 @@
                                 <name>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\app\data\arp_server_stub.h</name>
                             </file>
                         </group>
-                        <file>
-                            <name>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\app\app_main.c</name>
-                        </file>
-                        <file>
-                            <name>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\app\app_main.h</name>
-                        </file>
                         <file>
                             <name>$PROJ_DIR$\..\common_hardware_code\esp-hosted\host\stm32\app\app_main_api.c</name>
                         </file>
