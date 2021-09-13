@@ -312,11 +312,15 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* spiHandle)
     {
         __HAL_RCC_SPIn_CLK_ENABLE();
 
-        GPIO_InitStruct.Pin = GPIO_SPI_Pins;
+        GPIO_InitStruct.Pin = GPIO_SPI_SCK_Pin;
         GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-        GPIO_InitStruct.Pull = GPIO_NOPULL;
+        GPIO_InitStruct.Pull = GPIO_PULLUP;
         GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
         GPIO_InitStruct.Alternate = GPIO_SPI_AF;
+        HAL_GPIO_Init(GPIO_SPI_GPIO_Port, &GPIO_InitStruct);
+
+        GPIO_InitStruct.Pin = GPIO_SPI_MISO_Pin | GPIO_SPI_MOSI_Pin;
+        GPIO_InitStruct.Pull = GPIO_NOPULL;
         HAL_GPIO_Init(GPIO_SPI_GPIO_Port, &GPIO_InitStruct);
 
         hdma_spi_rx.Instance = DMA1_Channel1;
