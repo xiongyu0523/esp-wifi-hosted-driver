@@ -77,6 +77,7 @@ struct network_handle * network_open(char *if_name, void (* net_rx_callback)(str
   */
 struct pbuf * network_read(struct network_handle *handle, uint32_t xTicksToWait)
 {
+	UINT status;
 	struct pbuf *buffer = NULL;
 
 	if (!handle || !handle->ndev)
@@ -87,9 +88,17 @@ struct pbuf * network_read(struct network_handle *handle, uint32_t xTicksToWait)
 	if (!buffer)
 		return NULL;
 
-	tx_queue_receive(&(handle->ndev->rx_q), buffer, xTicksToWait);
+	status = tx_queue_receive(&(handle->ndev->rx_q), buffer, xTicksToWait);
+	if (status == TX_SUCCESS) {
+		return buffer;
+	} else if (status == TX_QUEUE_EMPTY) {
+		printf("WARNING: No data available for network_read\r\n");
+	} else {
+		printf("ERROR: tx_queue_receive return %d\r\n", status);
+	}
 
-	return buffer;
+	free(buffer);
+	return NULL;
 }
 
 

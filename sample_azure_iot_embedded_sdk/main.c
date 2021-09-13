@@ -137,7 +137,7 @@ static ULONG sample_arp_cache_area[SAMPLE_ARP_CACHE_SIZE / sizeof(ULONG)];
 #endif
 static ULONG sample_helper_thread_stack[SAMPLE_HELPER_STACK_SIZE / sizeof(ULONG)];
 
-static nx_wifi_info_t wifi_info = {.ssid = WIFI_SSID, .password = WIFI_PASSWORD};
+static nx_wifi_info_t wifi_info = {.ssid = WIFI_SSID, .password = WIFI_PASSWORD, .mode = WIFI_AUTH_WPA2_PSK};
 
 static const CHAR *sntp_servers[] =
 {
@@ -299,6 +299,9 @@ ULONG   dns_server_address[3];
 #ifndef SAMPLE_DHCP_DISABLE
 UINT    dns_server_address_size = sizeof(dns_server_address);
 #endif
+
+    // TODO: replace by ip_check()
+    tx_thread_sleep(10 * 100);
 
     NX_PARAMETER_NOT_USED(parameter);
 

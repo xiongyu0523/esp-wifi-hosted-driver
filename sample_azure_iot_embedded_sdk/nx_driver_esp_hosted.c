@@ -6,6 +6,7 @@
 #include "netdev_api.h"
 #include "commands.h"
 #include "common.h"
+#include "trace.h"
 #include "stm32l4xx_hal.h"
 
 #include "nx_driver_esp_hosted.h"
@@ -34,9 +35,7 @@ static NX_PACKET_POOL   *_pool_ptr = NULL;
 static NX_IP            *_ip_ptr   = NULL;
 
 static TX_SEMAPHORE     _device_ready_semphr;
-struct network_handle   *sta_handle;
-
-UCHAR   _nx_driver_hardware_address[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x56};  
+struct network_handle   *_sta_handle = NULL;
 
 /* Define the routines for processing each driver entry request */
 static UINT _nx_driver_initialize(NX_IP_DRIVER *driver_req_ptr);
@@ -248,12 +247,12 @@ static void _sta_rx_callback(struct network_handle *net_handle)
 	rx_buffer = network_read(net_handle, 0);
 	if (rx_buffer) {
 
+        //printf("DEBUG: %d bytes received\r\n", rx_buffer->len);
+
         _nx_driver_receive_callback(rx_buffer);
 
 		free(rx_buffer->payload);
-		rx_buffer->payload = NULL;
 		free(rx_buffer);
-		rx_buffer = NULL;
 	}
 }
 
@@ -265,7 +264,8 @@ static UINT _nx_driver_initialize(NX_IP_DRIVER *driver_req_ptr)
     UINT    interface_index;
     ULONG   mac_addr_lsw, mac_addr_msw;
     UINT    error_code = NX_SUCCESS;
-	char    mac[MAC_STR_LEN];
+	CHAR    mac_str[MAC_STR_LEN];
+    uint8_t mac[6];    
 
     /* Setup the IP pointer from the driver request */
     _ip_ptr = driver_req_ptr->nx_ip_driver_ptr;
@@ -285,8 +285,10 @@ static UINT _nx_driver_initialize(NX_IP_DRIVER *driver_req_ptr)
     tx_semaphore_get(&_device_ready_semphr, TX_WAIT_FOREVER);
 
     control_path_platform_init();
-	memset(mac, 0, MAC_STR_LEN);
-	wifi_get_mac(WIFI_MODE_STA, mac);
+	memset(mac_str, 0, MAC_STR_LEN);
+	wifi_get_mac(WIFI_MODE_STA, mac_str);
+
+    sscanf(mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
 
     /* Once the Ethernet controller is initialized, the driver needs to
         configure the NetX Interface Control block, as outlined below */
@@ -318,7 +320,7 @@ static UINT _nx_driver_enable(NX_IP_DRIVER *driver_req_ptr)
 {
     UINT error_code = NX_DRIVER_ERROR;
     UINT retry_count = 0;
-    esp_hosted_control_config_t ap_config;
+    esp_hosted_control_config_t ap_config = {0};
 
     /* Get the wifi connection info from application */
     nx_wifi_info_t *wifi_info_ptr = (nx_wifi_info_t *)driver_req_ptr->nx_ip_driver_interface->nx_interface_additional_link_info;
@@ -332,19 +334,19 @@ static UINT _nx_driver_enable(NX_IP_DRIVER *driver_req_ptr)
         
         retry_count++;
 
-        printf("%d try to connect to SSID: %s\n", retry_count, wifi_info_ptr->ssid);
+        printf("INFO: %d times try to connect to %s\r\n", retry_count, wifi_info_ptr->ssid);
 
         if (wifi_set_ap_config(ap_config) == SUCCESS) {
-            printf("Connection established\r\n");
+            printf("INFO: Connection established\r\n");
 
-            sta_handle = network_open(STA_INTERFACE, _sta_rx_callback);
-            if (sta_handle != NULL) {
+            _sta_handle = network_open(STA_INTERFACE, _sta_rx_callback);
+            if (_sta_handle != NULL) {
                 error_code = SUCCESS;
-            }
-            
+            }            
             break;
         } else {
             if (retry_count > NX_DRIVER_JOIN_MAX_CNT) {
+                printf("WARNING: Connection failed after retry!\r\n");
                 break;
             } else {
                 tx_thread_sleep(100);
@@ -411,16 +413,17 @@ static UINT _nx_driver_packet_send(NX_IP_DRIVER *driver_req_ptr)
     NX_CHANGE_ULONG_ENDIAN(*(ethernet_frame_ptr + 3));
 
     for (NX_PACKET *p = packet_ptr; p != NULL; p = p->nx_packet_next) {
-
         struct pbuf *buffer = malloc(sizeof(struct pbuf));
-		if (buffer != NULL) {
-			buffer->len = p->nx_packet_length;
-			buffer->payload = malloc(buffer->len);
-			if (buffer->payload != NULL) {
-				memcpy(buffer->payload, p->nx_packet_prepend_ptr, buffer->len);    
-				network_write(sta_handle, buffer);
-			}
-		}
+		assert(buffer != NULL);
+
+        buffer->len = p->nx_packet_length;
+        buffer->payload = malloc(buffer->len);
+
+        assert(buffer->payload != NULL);
+
+        memcpy(buffer->payload, p->nx_packet_prepend_ptr, buffer->len);    
+        //printf("DEBUG: %d bytes to send\r\n", buffer->len);
+        network_write(_sta_handle, buffer);
     }
 
     NX_DRIVER_ETHERNET_HEADER_REMOVE(packet_ptr);
