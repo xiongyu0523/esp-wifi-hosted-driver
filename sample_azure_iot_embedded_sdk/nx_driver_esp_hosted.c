@@ -106,7 +106,7 @@ void nx_driver_esp_hosted(NX_IP_DRIVER *driver_req_ptr)
         break;
 
     case NX_LINK_GET_STATUS:
-        /* Process driver get link status. Unsupported feature */
+        *(driver_req_ptr->nx_ip_driver_return_ptr) =  driver_req_ptr->nx_ip_driver_interface->nx_interface_link_up;
         break;
 
     case NX_LINK_GET_SPEED:
@@ -253,7 +253,9 @@ static void _sta_rx_callback(struct network_handle *net_handle)
 
 		free(rx_buffer->payload);
 		free(rx_buffer);
-	}
+	} else {
+        printf("WARNING: No packet to receive\r\n");
+    }
 }
 
 /**************************************************************************//**
@@ -421,9 +423,12 @@ static UINT _nx_driver_packet_send(NX_IP_DRIVER *driver_req_ptr)
 
         assert(buffer->payload != NULL);
 
-        memcpy(buffer->payload, p->nx_packet_prepend_ptr, buffer->len);    
+        memcpy(buffer->payload, p->nx_packet_prepend_ptr, buffer->len);
+
         //printf("DEBUG: %d bytes to send\r\n", buffer->len);
-        network_write(_sta_handle, buffer);
+        if (network_write(_sta_handle, buffer) != 0) {
+            printf("WARNING: driver packet write failed\r\n");
+        }
     }
 
     NX_DRIVER_ETHERNET_HEADER_REMOVE(packet_ptr);

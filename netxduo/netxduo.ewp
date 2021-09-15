@@ -355,6 +355,8 @@
                     <state>$PROJ_DIR$\..\netxduo\addons\cloud</state>
                     <state>$PROJ_DIR$\..\netxduo\addons\dns</state>
                     <state>$PROJ_DIR$\..\netxduo\addons\mqtt</state>
+                    <state>$PROJ_DIR$\..\netxduo\addons\web</state>
+                    <state>$PROJ_DIR$\..\netxduo\utility\filex_stub</state>
                     <state>$PROJ_DIR$\..\netxduo\nx_secure\inc</state>
                     <state>$PROJ_DIR$\..\netxduo\nx_secure\ports</state>
                     <state>$PROJ_DIR$\..\netxduo\crypto_libraries\inc</state>
@@ -1072,7 +1074,7 @@
                 </option>
                 <option>
                     <name>IarchiveOutput</name>
-                    <state>E:\GIT\project-X-Ware\project-X-Ware\b-l4s5i-iot01a\iar\netxduo\Debug\Exe\netxduo.a</state>
+                    <state>C:\Users\yuxiong\Documents\GitHub\esp-wifi-hosted-driver\netxduo\Debug\Exe\netxduo.a</state>
                 </option>
             </data>
         </settings>
@@ -2441,6 +2443,24 @@
             </file>
             <file>
                 <name>$PROJ_DIR$\addons\sntp\nxd_sntp_client.h</name>
+            </file>
+        </group>
+        <group>
+            <name>web</name>
+            <file>
+                <name>$PROJ_DIR$\addons\web\nx_tcpserver.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\addons\web\nx_tcpserver.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\addons\web\nx_web_http_common.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\addons\web\nx_web_http_server.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\addons\web\nx_web_http_server.h</name>
             </file>
         </group>
     </group>
@@ -5223,6 +5243,21 @@
                     </file>
                 </group>
             </group>
+        </group>
+    </group>
+    <group>
+        <name>utility</name>
+        <group>
+            <name>filex_stub</name>
+        </group>
+        <group>
+            <name>iperf</name>
+            <file>
+                <name>$PROJ_DIR$\utility\iperf\nx_iperf.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\utility\iperf\nx_iperf.h</name>
+            </file>
         </group>
     </group>
 </project>

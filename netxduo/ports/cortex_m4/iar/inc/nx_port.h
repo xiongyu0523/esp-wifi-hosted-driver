@@ -52,7 +52,7 @@
 /* Define for the specific project. 
    All the defines for specific project should be added under this line. */
 
-#define NX_ENABLE_INTERFACE_CAPABILITY
+#define NX_WEB_HTTP_NO_FILEX
 #define SAMPLE_BOARD_SETUP board_setup
 #define SAMPLE_NETWORK_DRIVER nx_driver_esp_hosted
 
@@ -83,15 +83,6 @@ extern int hardware_rand(void);
 #define NX_DISABLE_IPV6
 
 #define NX_PACKET_ALIGNMENT             32
-
-#define NX_DISABLE_ICMPV4_RX_CHECKSUM
-#define NX_DISABLE_ICMPV4_TX_CHECKSUM  
-#define NX_DISABLE_IP_RX_CHECKSUM
-#define NX_DISABLE_IP_TX_CHECKSUM
-#define NX_DISABLE_TCP_RX_CHECKSUM
-#define NX_DISABLE_TCP_TX_CHECKSUM
-#define NX_DISABLE_UDP_RX_CHECKSUM
-#define NX_DISABLE_UDP_TX_CHECKSUM
 
 #define NX_ASSERT_FAIL for(;;){}
 

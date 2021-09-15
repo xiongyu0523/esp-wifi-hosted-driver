@@ -132,12 +132,21 @@ static ULONG sample_pool_stack_size = sizeof(sample_pool_stack);
 extern ULONG sample_pool_stack[];
 extern ULONG sample_pool_stack_size;
 #endif
+
+#ifdef IPERF_TEST
+#define	HTTP_STACK_SIZE				4096
+#define	IPERF_STACK_SIZE			4096
+static 	UCHAR http_stack[HTTP_STACK_SIZE];
+static 	UCHAR iperf_stack[IPERF_STACK_SIZE];
+extern	VOID nx_iperf_entry(NX_PACKET_POOL *pool_ptr, NX_IP *ip_ptr, UCHAR* http_stack, ULONG http_stack_size, UCHAR *iperf_stack, ULONG iperf_stack_size);
+#endif
+
 #ifndef SAMPLE_NETWORK_CONFIGURE
 static ULONG sample_arp_cache_area[SAMPLE_ARP_CACHE_SIZE / sizeof(ULONG)];
 #endif
 static ULONG sample_helper_thread_stack[SAMPLE_HELPER_STACK_SIZE / sizeof(ULONG)];
 
-static nx_wifi_info_t wifi_info = {.ssid = WIFI_SSID, .password = WIFI_PASSWORD, .mode = WIFI_AUTH_WPA2_PSK};
+static nx_wifi_info_t wifi_info = {.ssid = WIFI_SSID, .password = WIFI_PASSWORD, .mode = WIFI_SECURITY_TYPE};
 
 static const CHAR *sntp_servers[] =
 {
@@ -290,6 +299,7 @@ UINT  status;
 void sample_helper_thread_entry(ULONG parameter)
 {
 
+ULONG   actual_status;
 UINT    status;
 ULONG   ip_address = 0;
 ULONG   network_mask = 0;
@@ -300,10 +310,10 @@ ULONG   dns_server_address[3];
 UINT    dns_server_address_size = sizeof(dns_server_address);
 #endif
 
-    // TODO: replace by ip_check()
-    tx_thread_sleep(10 * 100);
-
     NX_PARAMETER_NOT_USED(parameter);
+
+    printf("INFO: Waiting for link ready...\r\n");
+    nx_ip_status_check(&ip_0, NX_IP_LINK_ENABLED, &actual_status, NX_WAIT_FOREVER);
 
 #ifndef SAMPLE_DHCP_DISABLE
     dhcp_wait();
@@ -370,8 +380,12 @@ UINT    dns_server_address_size = sizeof(dns_server_address);
     unix_time_get((ULONG *)&unix_time);
     srand(unix_time);
 
+#ifdef IPERF_TEST
+    nx_iperf_entry(&pool_0, &ip_0, http_stack, HTTP_STACK_SIZE, iperf_stack, IPERF_STACK_SIZE);
+#else
     /* Start sample.  */
     sample_entry(&ip_0, &pool_0, &dns_0, unix_time_get);
+#endif
 }
 
 #ifndef SAMPLE_DHCP_DISABLE

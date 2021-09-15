@@ -224,7 +224,7 @@
                     <state>USE_HAL_DRIVER</state>
                     <state>WIFI_SSID=""</state>
                     <state>WIFI_PASSWORD=""</state>
-                    <state>WIFI_SECURITY_TYPE=WIFI_ECN_WPA2_PSK</state>
+                    <state>WIFI_SECURITY_TYPE=WIFI_AUTH_WPA2_PSK</state>
                 </option>
                 <option>
                     <name>CCPreprocFile</name>
